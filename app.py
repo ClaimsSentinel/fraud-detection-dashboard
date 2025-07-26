@@ -30,10 +30,28 @@ required_columns = [
 if uploaded_file:
     df = pd.read_csv(uploaded_file, nrows=500)
 
-    if all(col in df.columns for col in required_columns):
+if all(col in df.columns for col in required_columns):
+    try:
         model = joblib.load("fraud_model.pkl")
-        predictions = model.predict(df)
+        prediction_input = df[["Claim Amount", "Previous Claims Count", "Claim Location", "Vehicle Make/Model", "Claim Description"]]
+        predictions = model.predict(prediction_input)
         df["Fraud Prediction"] = predictions
+
+        st.subheader("Prediction Results")
+        st.dataframe(df)
+
+        st.download_button(
+            label="💾 Download Predictions for Review",
+            data=df.to_csv(index=False).encode('utf-8'),
+            file_name="fraud_predictions_for_review.csv",
+            mime="text/csv"
+        )
+    except Exception as e:
+        st.error("⚠️ An error occurred during prediction:")
+        st.code(str(e))
+else:
+    st.error("Uploaded file is missing one or more required columns:")
+    st.code("\n".join(required_columns))
 
         st.subheader("Prediction Results")
         st.dataframe(df)
