@@ -25,6 +25,12 @@ if uploaded_file:
 
         st.subheader("Prediction Results")
         st.dataframe(df)
+        st.download_button(
+    label="💾 Download Predictions for Review",
+    data=df.to_csv(index=False).encode('utf-8'),
+    file_name="fraud_predictions_for_review.csv",
+    mime="text/csv"
+)
     else:
         st.error("Uploaded file is missing one or more required columns:")
         st.code("\n".join(required_columns))
