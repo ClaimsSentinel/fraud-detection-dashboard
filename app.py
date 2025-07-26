@@ -8,8 +8,9 @@ st.markdown("Upload a CSV file with claims data to predict fraud likelihood.")
 
 uploaded_file = st.file_uploader("Upload claim data (.csv)", type=["csv"])
 
+uploaded_file = st.file_uploader("Upload CSV", type="csv")
 if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+    df = pd.read_csv(uploaded_file, nrows=500)
 
     # Load trained model
     model = joblib.load("fraud_model.pkl")
