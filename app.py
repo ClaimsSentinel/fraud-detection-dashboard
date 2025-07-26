@@ -22,6 +22,8 @@ required_columns = [
     "Policyholder ID"
 ]
 
+def some_function():
+    required_columns = ["A", "B", "C"]
     if all(col in df.columns for col in required_columns):
         model = joblib.load("fraud_model.pkl")
         predictions = model.predict(df)
