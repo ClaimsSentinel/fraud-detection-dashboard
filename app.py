@@ -20,7 +20,7 @@ if uploaded_file:
 
     if all(col in df.columns for col in required_columns):
         model = joblib.load("fraud_model.pkl")
-        predictions = model.predict(df[required_columns])
+        predictions = model.predict(df)
         df["Fraud Prediction"] = predictions
 
         st.subheader("Prediction Results")
