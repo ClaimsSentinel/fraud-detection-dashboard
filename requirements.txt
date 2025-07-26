@@ -5,3 +5,4 @@ scikit-learn
 matplotlib
 faker
 joblib
+scikit-learn==1.3.2
