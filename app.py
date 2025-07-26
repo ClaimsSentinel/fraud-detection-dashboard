@@ -10,13 +10,17 @@ uploaded_file = st.file_uploader("Upload claim data (.csv)", type=["csv"])
 if uploaded_file:
     df = pd.read_csv(uploaded_file, nrows=500)
 
-    required_columns = [
-        "Claim Amount",
-        "Previous Claims Count",
-        "Claim Location",
-        "Vehicle Make/Model",
-        "Claim Description"
-    ]
+required_columns = [
+    "Claim Amount",
+    "Previous Claims Count",
+    "Claim Location",
+    "Vehicle Make/Model",
+    "Claim Description",
+    "Claim ID",
+    "Adjuster Notes",
+    "Date of Claim",
+    "Policyholder ID"
+]
 
     if all(col in df.columns for col in required_columns):
         model = joblib.load("fraud_model.pkl")
