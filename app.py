@@ -53,17 +53,23 @@ else:
     st.error("Uploaded file is missing one or more required columns:")
     st.code("\n".join(required_columns))
 
-        st.subheader("Prediction Results")
-        st.dataframe(df)
-        st.download_button(
-            label="💾 Download Predictions for Review",
-            data=df.to_csv(index=False).encode('utf-8'),
-            file_name="fraud_predictions_for_review.csv",
-            mime="text/csv"
-        )
-    else:
-        st.error("Uploaded file is missing one or more required columns:")
-        st.code("\n".join(required_columns))
+if all(col in df.columns for col in required_columns):
+    model = joblib.load("fraud_model.pkl")
+    predictions = model.predict(df)
+    df["Fraud Prediction"] = predictions
+
+    st.subheader("Prediction Results")
+    st.dataframe(df)
+
+    st.download_button(
+        label="💾 Download Predictions for Review",
+        data=df.to_csv(index=False).encode('utf-8'),
+        file_name="fraud_predictions_for_review.csv",
+        mime="text/csv"
+    )
+else:
+    st.error("Uploaded file is missing one or more required columns:")
+    st.code("\n".join(required_columns))
 
 st.markdown("---")
 st.header("🔁 Retrain Model with Human Feedback")
