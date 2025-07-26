@@ -1,7 +1,7 @@
 
 import streamlit as st
 import pandas as pd
-import joblib
+import joblib("fraud_model.pkl")
 
 st.title("🕵️‍♀️ Insurance Fraud Detection Dashboard")
 st.markdown("Upload a CSV file with claims data to predict fraud likelihood.")
