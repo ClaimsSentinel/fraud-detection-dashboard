@@ -1,21 +1,14 @@
 import streamlit as st
 import pandas as pd
 import joblib
-import io
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.feature_extraction.text import TfidfVectorizer
+from difflib import get_close_matches
 
+st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
 st.title("🕵️‍♀️ Insurance Fraud Detection Dashboard")
 st.markdown("Upload a CSV file with claims data to predict fraud likelihood.")
 
-uploaded_file = st.file_uploader("Upload claim data (.csv)", type=["csv"])
-
-required_columns = [
+# Define required columns
+expected_columns = [
     "Claim Amount",
     "Previous Claims Count",
     "Claim Location",
@@ -27,64 +20,75 @@ required_columns = [
     "Policyholder ID"
 ]
 
+def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
+    mapping = {}
+    for req_col in required_cols:
+        match = get_close_matches(req_col, uploaded_cols, n=1, cutoff=cutoff)
+        if match:
+            mapping[req_col] = match[0]
+        else:
+            mapping[req_col] = None
+    return mapping
+
+# Upload main claim file
+uploaded_file = st.file_uploader("📂 Upload claim data (.csv)", type=["csv"])
+
 if uploaded_file:
-    df = pd.read_csv(uploaded_file, nrows=500)
+    df_raw = pd.read_csv(uploaded_file)
+    column_map = fuzzy_column_map(df_raw.columns.tolist(), expected_columns)
 
-if all(col in df.columns for col in required_columns):
-    try:
-        model = joblib.load("fraud_model.pkl")
-        prediction_input = df[["Claim Amount", "Previous Claims Count", "Claim Location", "Vehicle Make/Model", "Claim Description"]]
-        predictions = model.predict(prediction_input)
-        df["Fraud Prediction"] = predictions
+    # Check for unmatched columns
+    unmatched = [k for k, v in column_map.items() if v is None]
+    if unmatched:
+        st.error("❌ Some required columns were not found in your file:")
+        st.code("\n".join(unmatched))
+    else:
+        # Rename columns based on fuzzy match
+        df = df_raw.rename(columns={v: k for k, v in column_map.items()})
 
-        st.subheader("Prediction Results")
-        st.dataframe(df)
+        try:
+            model = joblib.load("fraud_model.pkl")
+            predictions = model.predict(df)
+            df["Fraud Prediction"] = predictions
 
-        st.download_button(
-            label="💾 Download Predictions for Review",
-            data=df.to_csv(index=False).encode('utf-8'),
-            file_name="fraud_predictions_for_review.csv",
-            mime="text/csv"
-        )
-    except Exception as e:
-        st.error("⚠️ An error occurred during prediction:")
-        st.code(str(e))
-else:
-    st.error("Uploaded file is missing one or more required columns:")
-    st.code("\n".join(required_columns))
+            st.subheader("✅ Prediction Results")
+            st.dataframe(df)
 
-if all(col in df.columns for col in required_columns):
-    model = joblib.load("fraud_model.pkl")
-    predictions = model.predict(df)
-    df["Fraud Prediction"] = predictions
+            st.download_button(
+                label="💾 Download Predictions for Review",
+                data=df.to_csv(index=False).encode("utf-8"),
+                file_name="fraud_predictions.csv",
+                mime="text/csv"
+            )
+        except Exception as e:
+            st.error(f"⚠️ Prediction failed: {e}")
 
-    st.subheader("Prediction Results")
-    st.dataframe(df)
-
-    st.download_button(
-        label="💾 Download Predictions for Review",
-        data=df.to_csv(index=False).encode('utf-8'),
-        file_name="fraud_predictions_for_review.csv",
-        mime="text/csv"
-    )
-else:
-    st.error("Uploaded file is missing one or more required columns:")
-    st.code("\n".join(required_columns))
+# ---------------------------------------
+# Retrain Section
+# ---------------------------------------
 
 st.markdown("---")
 st.header("🔁 Retrain Model with Human Feedback")
 
-feedback_file = st.file_uploader("Upload labeled feedback (.csv)", type="csv", key="feedback")
+feedback_file = st.file_uploader("📂 Upload labeled feedback (.csv)", type="csv", key="feedback")
 
 if feedback_file:
     feedback_df = pd.read_csv(feedback_file)
 
-    required_cols = [
+    feedback_required = [
         "Claim Amount", "Previous Claims Count", "Claim Location",
         "Vehicle Make/Model", "Claim Description", "True Fraud"
     ]
 
-    if all(col in feedback_df.columns for col in required_cols):
+    if all(col in feedback_df.columns for col in feedback_required):
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import classification_report
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.pipeline import Pipeline
+        from sklearn.compose import ColumnTransformer
+        from sklearn.preprocessing import StandardScaler, OneHotEncoder
+        from sklearn.feature_extraction.text import TfidfVectorizer
+
         X = feedback_df.drop("True Fraud", axis=1)
         y = feedback_df["True Fraud"]
 
@@ -108,11 +112,10 @@ if feedback_file:
 
         joblib.dump(pipeline, "fraud_model.pkl")
 
-        y_pred = pipeline.predict(X_test)
-        report = classification_report(y_test, y_pred, output_dict=False)
+        report = classification_report(y_test, pipeline.predict(X_test), output_dict=False)
         st.success("✅ Model retrained successfully!")
         st.text(report)
+
     else:
         st.error("Missing one or more required columns:")
-        st.code("\n".join(required_cols))
-
+        st.code("\n".join(feedback_required))
