@@ -5,7 +5,7 @@ from difflib import get_close_matches
 
 st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
 st.title("🕵️‍♀️ Insurance Fraud Detection Dashboard")
-st.markdown("Upload a CSV file with claims data to predict fraud likelihood.")
+st.markdown("Upload a CSV or Excel file with claims data to predict fraud likelihood.")
 
 # Define required columns
 expected_columns = [
@@ -24,26 +24,29 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
     mapping = {}
     for req_col in required_cols:
         match = get_close_matches(req_col, uploaded_cols, n=1, cutoff=cutoff)
-        if match:
-            mapping[req_col] = match[0]
-        else:
-            mapping[req_col] = None
+        mapping[req_col] = match[0] if match else None
     return mapping
 
-# Upload main claim file
-uploaded_file = st.file_uploader("📂 Upload claim data (.csv)", type=["csv"])
+# --- Prediction Section ---
+uploaded_file = st.file_uploader("📂 Upload claim data (.csv or .xlsx)", type=["csv", "xlsx"])
 
 if uploaded_file:
-    df_raw = pd.read_csv(uploaded_file)
-    column_map = fuzzy_column_map(df_raw.columns.tolist(), expected_columns)
+    try:
+        if uploaded_file.name.endswith(".xlsx"):
+            df_raw = pd.read_excel(uploaded_file)
+        else:
+            df_raw = pd.read_csv(uploaded_file)
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        st.stop()
 
-    # Check for unmatched columns
+    column_map = fuzzy_column_map(df_raw.columns.tolist(), expected_columns)
     unmatched = [k for k, v in column_map.items() if v is None]
+
     if unmatched:
         st.error("❌ Some required columns were not found in your file:")
         st.code("\n".join(unmatched))
     else:
-        # Rename columns based on fuzzy match
         df = df_raw.rename(columns={v: k for k, v in column_map.items()})
 
         try:
@@ -63,17 +66,21 @@ if uploaded_file:
         except Exception as e:
             st.error(f"⚠️ Prediction failed: {e}")
 
-# ---------------------------------------
-# Retrain Section
-# ---------------------------------------
-
+# --- Retraining Section ---
 st.markdown("---")
 st.header("🔁 Retrain Model with Human Feedback")
 
-feedback_file = st.file_uploader("📂 Upload labeled feedback (.csv)", type="csv", key="feedback")
+feedback_file = st.file_uploader("📂 Upload labeled feedback (.csv or .xlsx)", type=["csv", "xlsx"], key="feedback")
 
 if feedback_file:
-    feedback_df = pd.read_csv(feedback_file)
+    try:
+        if feedback_file.name.endswith(".xlsx"):
+            feedback_df = pd.read_excel(feedback_file)
+        else:
+            feedback_df = pd.read_csv(feedback_file)
+    except Exception as e:
+        st.error(f"Error reading feedback file: {e}")
+        st.stop()
 
     feedback_required = [
         "Claim Amount", "Previous Claims Count", "Claim Location",
