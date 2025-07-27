@@ -1,4 +1,4 @@
-# app.py - Updated with Feature Importance & Random Forest Tooltip
+# app.py - Updated with SHAP Explanations, Feature Importance & Enhanced UX
 
 import streamlit as st
 import pandas as pd
@@ -17,18 +17,16 @@ from sklearn.metrics import classification_report
 import matplotlib.pyplot as plt
 from PIL import Image
 import io
+import shap
+import numpy as np
 
-# Must be first Streamlit call
 st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
 
-# Inject custom CSS for styling
 def local_css(file_name):
     with open(file_name) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 local_css("assets/custom.css")
-
-# Show logo
 
 def image_to_base64(img):
     buffered = io.BytesIO()
@@ -54,17 +52,9 @@ def show_logo():
 
 show_logo()
 
-# Required columns
 required_columns = [
-    "Claim Amount",
-    "Previous Claims Count",
-    "Claim Location",
-    "Vehicle Make/Model",
-    "Claim Description",
-    "Claim ID",
-    "Adjuster Notes",
-    "Date of Claim",
-    "Policyholder ID"
+    "Claim Amount", "Previous Claims Count", "Claim Location", "Vehicle Make/Model",
+    "Claim Description", "Claim ID", "Adjuster Notes", "Date of Claim", "Policyholder ID"
 ]
 
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
@@ -77,7 +67,6 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 
-# Upload section
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>📂 Upload CSV or Excel File</h4>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
 
@@ -108,6 +97,17 @@ if uploaded_file:
                         </div>
                     """, unsafe_allow_html=True)
 
+                    if hasattr(model.named_steps['classifier'], "predict_proba"):
+                        explainer = shap.Explainer(model.named_steps['classifier'], model.named_steps['preprocessor'].transform(X))
+                        shap_values = explainer(model.named_steps['preprocessor'].transform(X))
+                        top_shap = [", ".join(np.array(X.columns)[np.argsort(np.abs(row.values))[-3:][::-1]]) for row in shap_values]
+                        df["Top SHAP Drivers"] = top_shap
+
+                        for i in range(min(5, len(df))):
+                            with st.expander(f"🔍 Explain prediction for Claim ID: {df['Claim ID'].iloc[i]}"):
+                                st.write(f"**Prediction:** {'Fraud' if df['Fraud Prediction'].iloc[i] else 'Not Fraud'}")
+                                st.write(f"**Top Drivers:** {df['Top SHAP Drivers'].iloc[i]}")
+
                     st.download_button("📥 Download Results", df.to_csv(index=False).encode("utf-8"),
                                        file_name=f"fraud_predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
                 else:
@@ -117,7 +117,6 @@ if uploaded_file:
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
-# Retrain section
 st.markdown("---")
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>🧠 Retrain Fraud Detection Model</h4>", unsafe_allow_html=True)
 
@@ -172,7 +171,6 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                         </div>
                     """, unsafe_allow_html=True)
 
-                    # Feature importance
                     if model_choice == "Random Forest":
                         st.markdown("### 🧠 Top Influential Features")
                         importances = clf.feature_importances_
@@ -188,14 +186,9 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                         ax.set_title("Top Features Influencing Fraud Prediction")
                         st.pyplot(fig)
 
-                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training. "
-                                   "Higher importance scores mean those fields had more weight in detecting potentially fraudulent claims. "
-                                   "These insights are based on the retrained Random Forest model.")
+                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training. Higher scores mean those fields had more weight in detecting potentially fraudulent claims.")
                     else:
                         st.info("ℹ️ Feature importance is only available for Random Forest models.")
-
-                        st.caption("🧠 Random Forest is a prediction model that combines the decisions of many 'mini-experts' to flag suspicious claims. "
-                                   "It’s accurate, flexible, and helps identify which data points mattered most.")
-
+                        st.caption("🧠 Random Forest combines the output of many decision trees to enhance accuracy and interpretability.")
         except Exception as e:
             st.error(f"Training failed: {e}")
