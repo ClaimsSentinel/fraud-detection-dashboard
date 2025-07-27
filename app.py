@@ -114,7 +114,7 @@ if uploaded_file:
                                 index_to_explain = fraud_df.index[0]
 
                                 explainer = shap.TreeExplainer(classifier)
-                                shap_values = explainer.shap_values(X_transformed)
+                                shap_values = explainer.shap_values(X_transformed.astype(float))
 
                                 shap_df = pd.DataFrame({
                                     "Feature": preprocessor.get_feature_names_out(),
