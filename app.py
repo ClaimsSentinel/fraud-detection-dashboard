@@ -85,6 +85,7 @@ if uploaded_file:
             st.warning(f"⚠️ Could not map: {', '.join(unmapped)}")
         else:
             df = df.rename(columns={v: k for k, v in mapping.items() if v})
+            df = clean_dataframe(df)
             if all(col in df.columns for col in required_columns):
                 X = df[required_columns]
 
