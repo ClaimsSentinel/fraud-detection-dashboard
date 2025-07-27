@@ -163,7 +163,17 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                         ("cat", OneHotEncoder(handle_unknown="ignore"), categoricals)
                     ])
 
-                    clf = LogisticRegression(max_iter=1000) if model_choice == "Logistic Regression" else RandomForestClassifier(n_estimators=100, random_state=42)
+                    if model_choice == "Logistic Regression":
+                        clf = LogisticRegression(max_iter=1000)
+                    else:
+                        clf = RandomForestClassifier(
+                            n_estimators=200,
+                            max_depth=None,
+                            min_samples_split=2,
+                            min_samples_leaf=1,
+                            random_state=42,
+                            class_weight='balanced'
+                        )
 
                     pipeline = Pipeline([
                         ("preprocessor", preprocessor),
