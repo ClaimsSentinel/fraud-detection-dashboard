@@ -1,10 +1,10 @@
-# app.py - Complete Version with SHAP, UI Polish, and Error Fixes
-
 import streamlit as st
 import pandas as pd
 import joblib
 import os
 import base64
+import io
+from PIL import Image
 from difflib import get_close_matches
 from datetime import datetime
 from sklearn.model_selection import train_test_split
@@ -15,19 +15,18 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report
 import matplotlib.pyplot as plt
-from PIL import Image
-import io
 
-# Streamlit setup
+# Page setup
 st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
 
+# Load CSS
 def local_css(file_name):
     with open(file_name) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 local_css("assets/custom.css")
 
-# Show logo
+# Logo rendering
 
 def image_to_base64(img):
     buffered = io.BytesIO()
@@ -55,11 +54,11 @@ show_logo()
 
 # Required columns
 required_columns = [
-    "Claim Amount", "Previous Claims Count", "Claim Location",
-    "Vehicle Make/Model", "Claim Description", "Claim ID",
-    "Adjuster Notes", "Date of Claim", "Policyholder ID"
+    "Claim Amount", "Previous Claims Count", "Claim Location", "Vehicle Make/Model",
+    "Claim Description", "Claim ID", "Adjuster Notes", "Date of Claim", "Policyholder ID"
 ]
 
+# Fuzzy column matcher
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
     mapping = {}
     for req_col in required_cols:
@@ -67,9 +66,7 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
         mapping[req_col] = match[0] if match else None
     return mapping
 
-def clean_dataframe(df):
-    return df.dropna(axis=0)
-
+# Load model
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 
@@ -80,7 +77,6 @@ uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
-        df = clean_dataframe(df)
         st.success("✅ File uploaded.")
 
         mapping = fuzzy_column_map(df.columns.tolist(), required_columns)
@@ -97,8 +93,7 @@ if uploaded_file:
                     df["Fraud Prediction"] = preds
 
                     st.subheader("🔎 Predictions")
-                    fraud_df = df[df["Fraud Prediction"] == 1]
-                    st.dataframe(fraud_df.style.highlight_max(axis=0), use_container_width=True)
+                    st.dataframe(df[df["Fraud Prediction"] == 1][["Claim ID", "Fraud Prediction"]], use_container_width=True)
 
                     st.markdown(f"""
                         <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
@@ -106,7 +101,10 @@ if uploaded_file:
                         </div>
                     """, unsafe_allow_html=True)
 
-                    # SHAP explanations (Why is this fraud)
+                    st.download_button("📥 Download Results", df.to_csv(index=False).encode("utf-8"),
+                                       file_name=f"fraud_predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+
+                    # SHAP explanations for flagged fraud predictions
                     st.markdown("<br><b>Need more insight?</b> Click below to understand why claims were flagged:", unsafe_allow_html=True)
 
                     if st.button("Explain Why This Is Fraud"):
@@ -119,13 +117,11 @@ if uploaded_file:
                             X_transformed = preprocessor.transform(X)
 
                             fraud_indices = df[df["Fraud Prediction"] == 1].index
-
                             if len(fraud_indices) == 0:
-                                st.info("✅ No fraud predictions to explain.")
+                                st.info("No fraud predictions to explain.")
                             else:
                                 index_to_explain = fraud_indices[0]
-                                st.subheader("🔎 Explanation for Flagged Claim")
-                                st.write(f"🆔 Claim ID: {df.loc[index_to_explain, 'Claim ID']}")
+                                st.markdown(f"**Explaining Claim ID:** `{df.loc[index_to_explain, 'Claim ID']}`")
 
                                 explainer = shap.TreeExplainer(classifier)
                                 shap_values = explainer.shap_values(X_transformed)
@@ -135,13 +131,11 @@ if uploaded_file:
                                     "SHAP Value": shap_values[1][index_to_explain]
                                 }).sort_values(by="SHAP Value", ascending=False)
 
-                                st.dataframe(shap_df.head(10))
+                                st.markdown("Top factors contributing to this fraud prediction:")
+                                st.dataframe(shap_df.head(10), use_container_width=True)
 
                         except Exception as e:
                             st.error(f"SHAP error: {e}")
-
-                    st.download_button("📥 Download Results", df.to_csv(index=False).encode("utf-8"),
-                                       file_name=f"fraud_predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
                 else:
                     st.error("⚠️ No trained model found. Please retrain below.")
             else:
@@ -149,7 +143,7 @@ if uploaded_file:
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
-# Retrain section
+# Retraining Section
 st.markdown("---")
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>🧠 Retrain Fraud Detection Model</h4>", unsafe_allow_html=True)
 
@@ -204,7 +198,6 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                         </div>
                     """, unsafe_allow_html=True)
 
-                    # Feature importance for Random Forest
                     if model_choice == "Random Forest":
                         st.markdown("### 🧠 Top Influential Features")
                         importances = clf.feature_importances_
@@ -220,13 +213,6 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                         ax.set_title("Top Features Influencing Fraud Prediction")
                         st.pyplot(fig)
 
-                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training. "
-                                   "Higher importance scores mean those fields had more weight in detecting potentially fraudulent claims.")
+                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training. These insights are based on the retrained Random Forest model.")
                     else:
                         st.info("ℹ️ Feature importance is only available for Random Forest models.")
-
-                        st.caption("🧠 Random Forest is a prediction model that combines the decisions of many 'mini-experts' to flag suspicious claims. "
-                                   "It’s accurate, flexible, and helps identify which data points mattered most.")
-
-        except Exception as e:
-            st.error(f"Training failed: {e}")
