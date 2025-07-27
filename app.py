@@ -1,4 +1,4 @@
-# app.py - Full App with UI polish + Data Cleaning Fix
+# app.py - Full UI Polished with SHAP Explanation Button and Exportable CSV
 
 import streamlit as st
 import pandas as pd
@@ -14,30 +14,14 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report
+import shap
 import matplotlib.pyplot as plt
 from PIL import Image
 import io
 
-# Must be first Streamlit call
-st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
-
-# Inject custom CSS
 def local_css(file_name):
     with open(file_name) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
-local_css("assets/custom.css")
-
-# Clean uploaded data
-def clean_dataframe(df):
-    df = df.dropna(axis=1, how="all")
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-    df.columns = df.columns.str.strip()
-    for col in df.select_dtypes(include="object").columns:
-        df[col] = df[col].astype(str).str.strip()
-    return df
-
-# Logo
 
 def image_to_base64(img):
     buffered = io.BytesIO()
@@ -48,7 +32,6 @@ def show_logo():
     logo_path = "logo/claimsentinel_logo.png"
     image = Image.open(logo_path)
     encoded = image_to_base64(image)
-
     st.markdown(f"""
         <style>
             .logo-container img:hover {{
@@ -61,15 +44,6 @@ def show_logo():
         </div>
     """, unsafe_allow_html=True)
 
-show_logo()
-
-# Required columns
-required_columns = [
-    "Claim Amount", "Previous Claims Count", "Claim Location",
-    "Vehicle Make/Model", "Claim Description", "Claim ID",
-    "Adjuster Notes", "Date of Claim", "Policyholder ID"
-]
-
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
     mapping = {}
     for req_col in required_cols:
@@ -77,12 +51,30 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
         mapping[req_col] = match[0] if match else None
     return mapping
 
+def clean_dataframe(df):
+    for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        elif pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+        else:
+            df[col] = df[col].astype(str)
+    return df
+
+st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
+local_css("assets/custom.css")
+show_logo()
+
+required_columns = [
+    "Claim Amount", "Previous Claims Count", "Claim Location", "Vehicle Make/Model",
+    "Claim Description", "Claim ID", "Adjuster Notes", "Date of Claim", "Policyholder ID"
+]
+
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 
-# Upload section
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>📂 Upload CSV or Excel File</h4>", unsafe_allow_html=True)
-uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
+uploaded_file = st.file_uploader("", type=["csv", "xlsx"])
 
 if uploaded_file:
     try:
@@ -92,19 +84,32 @@ if uploaded_file:
 
         mapping = fuzzy_column_map(df.columns.tolist(), required_columns)
         unmapped = [k for k, v in mapping.items() if v is None]
+
         if unmapped:
             st.warning(f"⚠️ Could not map: {', '.join(unmapped)}")
         else:
             df = df.rename(columns={v: k for k, v in mapping.items() if v})
             if all(col in df.columns for col in required_columns):
                 X = df[required_columns]
-
                 if model:
                     preds = model.predict(X)
                     df["Fraud Prediction"] = preds
 
                     st.subheader("🔎 Predictions")
                     st.dataframe(df[["Claim ID", "Fraud Prediction"]].head(10))
+
+                    # Per-row SHAP explanations
+                    explainer = shap.Explainer(model.named_steps["classifier"], model.named_steps["preprocessor"].transform(X))
+                    shap_values = explainer(model.named_steps["preprocessor"].transform(X))
+
+                    for i, row in df.head(10).iterrows():
+                        st.write(f"📄 Claim ID: {row['Claim ID']} — Prediction: {'Fraud' if row['Fraud Prediction'] else 'Legit'}")
+                        if st.button(f"🧠 Why is this fraud? (Row {i})", key=f"explain_{i}"):
+                            st.set_option("deprecation.showPyplotGlobalUse", False)
+                            shap.plots.waterfall(shap_values[i])
+                            st.pyplot(bbox_inches='tight')
+
+                    df["Fraud Explanation"] = [", ".join(map(str, shap_values[i].data)) for i in range(len(shap_values))]
 
                     st.markdown(f"""
                         <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
@@ -121,7 +126,6 @@ if uploaded_file:
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
-# Retrain section
 st.markdown("---")
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>🧠 Retrain Fraud Detection Model</h4>", unsafe_allow_html=True)
 
@@ -192,11 +196,8 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                         ax.set_title("Top Features Influencing Fraud Prediction")
                         st.pyplot(fig)
 
-                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training. Higher scores mean those fields had more weight in detecting potentially fraudulent claims.")
+                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training. Higher values indicate greater importance.")
                     else:
                         st.info("ℹ️ Feature importance is only available for Random Forest models.")
-
-                        st.caption("🧠 Random Forest is a prediction model that combines the decisions of many 'mini-experts' to flag suspicious claims. It’s accurate, flexible, and helps identify which data points mattered most.")
-
         except Exception as e:
             st.error(f"Training failed: {e}")
