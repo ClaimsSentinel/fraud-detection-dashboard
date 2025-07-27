@@ -12,49 +12,46 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report
-import matplotlib.pyplot as plt
+from PIL import Image
+import io
 
-# Must be first Streamlit call
-st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
+# Set page configuration early
+st.set_page_config(page_title="ClaimsSentinel – Smart Insights. Safer Claims.", layout="centered")
 
-# Inject custom CSS for colors, fonts, and hover animation
+# --- Local CSS (optional) ---
 def local_css(file_name):
-    with open(file_name) as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    if os.path.exists(file_name):
+        with open(file_name) as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 local_css("assets/custom.css")
 
-# Show logo only, centered with hover effect and larger size
-def show_logo():
-from PIL import Image
-import base64
-import io
-
+# --- Logo Display ---
 def image_to_base64(img):
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode()
 
 def show_logo():
-    logo_path = "logo/claimsentinel_logo.png"  # Make sure this path matches your file
-    image = Image.open(logo_path)
-    encoded = image_to_base64(image)
-
-    st.markdown(f"""
-        <style>
-            .logo-container img:hover {{
-                transform: scale(1.07);
-                transition: transform 0.3s ease;
-            }}
-        </style>
-        <div class='logo-container' style='display: flex; justify-content: center; margin: 2rem 0;'>
-            <img src='data:image/png;base64,{encoded}' style='width:260px;' />
-        </div>
-    """, unsafe_allow_html=True)
+    logo_path = "logo/claimsentinel_logo.png"
+    if os.path.exists(logo_path):
+        image = Image.open(logo_path)
+        encoded = image_to_base64(image)
+        st.markdown(f"""
+            <style>
+                .logo-container img:hover {{
+                    transform: scale(1.07);
+                    transition: transform 0.3s ease;
+                }}
+            </style>
+            <div class='logo-container' style='display: flex; justify-content: center; margin: 2rem 0;'>
+                <img src='data:image/png;base64,{encoded}' style='width:260px;' />
+            </div>
+        """, unsafe_allow_html=True)
 
 show_logo()
 
-# Required columns
+# --- Required Columns ---
 required_columns = [
     "Claim Amount",
     "Previous Claims Count",
@@ -67,7 +64,7 @@ required_columns = [
     "Policyholder ID"
 ]
 
-# Fuzzy matching for column names
+# --- Fuzzy Mapping ---
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
     mapping = {}
     for req_col in required_cols:
@@ -75,11 +72,11 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
         mapping[req_col] = match[0] if match else None
     return mapping
 
-# Load model if available
+# --- Load Model If Available ---
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 
-# File uploader
+# --- Upload File Section ---
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>📂 Upload CSV or Excel File</h4>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
 if uploaded_file:
@@ -87,8 +84,10 @@ if uploaded_file:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
         st.success("✅ File uploaded.")
 
+        # Fuzzy mapping
         mapping = fuzzy_column_map(df.columns.tolist(), required_columns)
         unmapped = [k for k, v in mapping.items() if v is None]
+
         if unmapped:
             st.warning(f"⚠️ Could not map: {', '.join(unmapped)}")
         else:
@@ -112,7 +111,7 @@ if uploaded_file:
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
-# Retrain section
+# --- Retraining Section ---
 st.markdown("---")
 st.header("🧠 Retrain Fraud Detection Model")
 
