@@ -1,3 +1,5 @@
+# app.py - Updated with Feature Importance & Random Forest Tooltip
+
 import streamlit as st
 import pandas as pd
 import joblib
@@ -12,20 +14,22 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report
+import matplotlib.pyplot as plt
 from PIL import Image
 import io
 
 # Must be first Streamlit call
 st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
 
-# Inject custom CSS for colors, fonts, and hover animation
+# Inject custom CSS for styling
 def local_css(file_name):
     with open(file_name) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 local_css("assets/custom.css")
 
-# Show logo only, centered with hover effect and larger size
+# Show logo
+
 def image_to_base64(img):
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
@@ -44,7 +48,7 @@ def show_logo():
             }}
         </style>
         <div class='logo-container' style='display: flex; justify-content: center; margin: 2rem 0;'>
-            <img src='data:image/png;base64,{encoded}' style='width:260px;' />
+            <img src='data:image/png;base64,{encoded}' style='width:400px;' />
         </div>
     """, unsafe_allow_html=True)
 
@@ -63,7 +67,6 @@ required_columns = [
     "Policyholder ID"
 ]
 
-# Fuzzy matching for column names
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
     mapping = {}
     for req_col in required_cols:
@@ -71,13 +74,13 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
         mapping[req_col] = match[0] if match else None
     return mapping
 
-# Load model if available
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 
-# File uploader
+# Upload section
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>📂 Upload CSV or Excel File</h4>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
+
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
@@ -96,15 +99,14 @@ if uploaded_file:
                     preds = model.predict(X)
                     df["Fraud Prediction"] = preds
 
-                    total = len(df)
-                    fraud_count = df["Fraud Prediction"].sum()
-                    fraud_percent = round((fraud_count / total) * 100, 2)
-
-                    st.success(f"📊 **{total} total claims analyzed**")
-                    st.warning(f"⚠️ **{fraud_count} flagged as potential fraud ({fraud_percent}%)**")
-
                     st.subheader("🔎 Predictions")
                     st.dataframe(df[["Claim ID", "Fraud Prediction"]].head(10))
+
+                    st.markdown(f"""
+                        <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
+                            📊 <b>Total claims:</b> {len(df)} &nbsp;&nbsp;|&nbsp;&nbsp; ⚠️ <b>Flagged as fraud:</b> {df['Fraud Prediction'].sum()}
+                        </div>
+                    """, unsafe_allow_html=True)
 
                     st.download_button("📥 Download Results", df.to_csv(index=False).encode("utf-8"),
                                        file_name=f"fraud_predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
@@ -117,7 +119,7 @@ if uploaded_file:
 
 # Retrain section
 st.markdown("---")
-st.markdown("<h2 style='font-size:28px; font-weight:700; color:#1A237E;'>🧠 Retrain Fraud Detection Model</h2>", unsafe_allow_html=True)
+st.markdown("<h4 style='font-size:22px; font-weight:600;'>🧠 Retrain Fraud Detection Model</h4>", unsafe_allow_html=True)
 
 with st.expander("📚 Upload labeled data to retrain the model"):
     train_file = st.file_uploader("Upload training file with `Fraud Label`", type=["csv", "xlsx"], key="train")
@@ -160,9 +162,40 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                     joblib.dump(pipeline, model_path)
                     model = pipeline
 
-                    st.success(f"📊 {model_choice} model trained successfully on {len(train_df)} labeled claims.")
+                    st.success(f"✅ {model_choice} model trained and saved.")
                     st.text("📊 Classification Report")
                     st.text(classification_report(y_test, y_pred))
+
+                    st.markdown(f"""
+                        <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
+                            ✅ <b>Model trained on:</b> {len(train_df)} claims
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                    # Feature importance
+                    if model_choice == "Random Forest":
+                        st.markdown("### 🧠 Top Influential Features")
+                        importances = clf.feature_importances_
+                        feature_names = pipeline.named_steps['preprocessor'].get_feature_names_out()
+                        importance_df = pd.DataFrame({
+                            "Feature": feature_names,
+                            "Importance": importances
+                        }).sort_values(by="Importance", ascending=False).head(10)
+
+                        fig, ax = plt.subplots(figsize=(8, 5))
+                        ax.barh(importance_df["Feature"], importance_df["Importance"], color="skyblue")
+                        ax.set_xlabel("Importance Score")
+                        ax.set_title("Top Features Influencing Fraud Prediction")
+                        st.pyplot(fig)
+
+                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training. "
+                                   "Higher importance scores mean those fields had more weight in detecting potentially fraudulent claims. "
+                                   "These insights are based on the retrained Random Forest model.")
+                    else:
+                        st.info("ℹ️ Feature importance is only available for Random Forest models.")
+
+                        st.caption("🧠 Random Forest is a prediction model that combines the decisions of many 'mini-experts' to flag suspicious claims. "
+                                   "It’s accurate, flexible, and helps identify which data points mattered most.")
 
         except Exception as e:
             st.error(f"Training failed: {e}")
