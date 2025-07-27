@@ -100,33 +100,46 @@ if uploaded_file:
                         </div>
                     """, unsafe_allow_html=True)
 
-                    if fraud_df.shape[0] > 0:
-                        st.markdown("<br><b>Need more insight?</b> Click below to understand why claims were flagged:", unsafe_allow_html=True)
-                        if st.button("Explain Why This Is Fraud"):
-                            try:
-                                import shap
-                                from IPython import get_ipython
-                                shap.initjs()
+       # Filter only fraud predictions
+fraud_df = df[df["Fraud Prediction"] == 1]
 
-                                preprocessor = model.named_steps["preprocessor"]
-                                classifier = model.named_steps["classifier"]
-                                X_transformed = preprocessor.transform(X)
-                                index_to_explain = fraud_df.index[0]
+if fraud_df.shape[0] > 0:
+    st.markdown(
+        "<br><b>Need more insight?</b> Click below to understand why claims were flagged:",
+        unsafe_allow_html=True,
+    )
 
-                                explainer = shap.TreeExplainer(classifier)
-                                shap_values = explainer.shap_values(X_transformed.astype(float))
+    if st.button("Explain Why This Is Fraud"):
+        try:
+            import shap
+            import numpy as np
+            shap.initjs()
 
-                                shap_df = pd.DataFrame({
-                                    "Feature": preprocessor.get_feature_names_out(),
-                                    "SHAP Value": shap_values[1][index_to_explain]
-                                }).sort_values(by="SHAP Value", ascending=False)
+            preprocessor = model.named_steps["preprocessor"]
+            classifier = model.named_steps["classifier"]
+            X_transformed = preprocessor.transform(X)
 
-                                st.markdown(f"**Explaining Claim ID:** `{df.loc[index_to_explain, 'Claim ID']}`")
-                                st.markdown("Top factors contributing to this fraud prediction:")
-                                st.dataframe(shap_df.head(10), use_container_width=True)
+            # Convert transformed data to numeric float64 format
+            X_dense = X_transformed.toarray() if hasattr(X_transformed, "toarray") else X_transformed
+            X_numeric = np.array(X_dense, dtype=np.float64)
 
-                            except Exception as e:
-                                st.error(f"SHAP error: {e}")
+            # Get SHAP values
+            explainer = shap.TreeExplainer(classifier)
+            shap_values = explainer.shap_values(X_numeric)
+
+            index_to_explain = fraud_df.index[0]
+            st.markdown(f"**Explaining Claim ID:** `{df.loc[index_to_explain, 'Claim ID']}`")
+
+            shap_df = pd.DataFrame({
+                "Feature": preprocessor.get_feature_names_out(),
+                "SHAP Value": shap_values[1][index_to_explain]
+            }).sort_values(by="SHAP Value", ascending=False)
+
+            st.markdown("Top factors contributing to this fraud prediction:")
+            st.dataframe(shap_df.head(10), use_container_width=True)
+
+        except Exception as e:
+            st.error(f"SHAP error: {e}")
 
                     st.download_button("📥 Download Results", df.to_csv(index=False).encode("utf-8"),
                                        file_name=f"fraud_predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
