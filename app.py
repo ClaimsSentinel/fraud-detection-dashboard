@@ -1,4 +1,4 @@
-# app.py - Final Polish with SHAP, Scrollable Fraud Table, and UI Polish
+# app.py - Complete Version with SHAP, UI Polish, and Error Fixes
 
 import streamlit as st
 import pandas as pd
@@ -14,12 +14,11 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report
-import shap
 import matplotlib.pyplot as plt
 from PIL import Image
 import io
-import numpy as np
 
+# Streamlit setup
 st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
 
 def local_css(file_name):
@@ -27,6 +26,8 @@ def local_css(file_name):
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 local_css("assets/custom.css")
+
+# Show logo
 
 def image_to_base64(img):
     buffered = io.BytesIO()
@@ -37,6 +38,7 @@ def show_logo():
     logo_path = "logo/claimsentinel_logo.png"
     image = Image.open(logo_path)
     encoded = image_to_base64(image)
+
     st.markdown(f"""
         <style>
             .logo-container img:hover {{
@@ -51,6 +53,7 @@ def show_logo():
 
 show_logo()
 
+# Required columns
 required_columns = [
     "Claim Amount", "Previous Claims Count", "Claim Location",
     "Vehicle Make/Model", "Claim Description", "Claim ID",
@@ -65,15 +68,12 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
     return mapping
 
 def clean_dataframe(df):
-    df = df.copy()
-    for col in df.columns:
-        if df[col].apply(lambda x: isinstance(x, list)).any():
-            df[col] = df[col].astype(str)
-    return df
+    return df.dropna(axis=0)
 
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 
+# Upload section
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>📂 Upload CSV or Excel File</h4>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
 
@@ -98,29 +98,50 @@ if uploaded_file:
 
                     st.subheader("🔎 Predictions")
                     fraud_df = df[df["Fraud Prediction"] == 1]
+                    st.dataframe(fraud_df.style.highlight_max(axis=0), use_container_width=True)
+
                     st.markdown(f"""
                         <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
-                            📊 <b>Total claims:</b> {len(df)} &nbsp;&nbsp;|&nbsp;&nbsp; ⚠️ <b>Flagged as fraud:</b> {len(fraud_df)}
+                            📊 <b>Total claims:</b> {len(df)} &nbsp;&nbsp;|&nbsp;&nbsp; ⚠️ <b>Flagged as fraud:</b> {df['Fraud Prediction'].sum()}
                         </div>
                     """, unsafe_allow_html=True)
 
-                    st.dataframe(fraud_df.reset_index(drop=True), height=300)
+                    # SHAP explanations (Why is this fraud)
+                    st.markdown("<br><b>Need more insight?</b> Click below to understand why claims were flagged:", unsafe_allow_html=True)
+
+                    if st.button("Explain Why This Is Fraud"):
+                        try:
+                            import shap
+                            shap.initjs()
+
+                            preprocessor = model.named_steps["preprocessor"]
+                            classifier = model.named_steps["classifier"]
+                            X_transformed = preprocessor.transform(X)
+
+                            fraud_indices = df[df["Fraud Prediction"] == 1].index
+
+                            if len(fraud_indices) == 0:
+                                st.info("✅ No fraud predictions to explain.")
+                            else:
+                                index_to_explain = fraud_indices[0]
+                                st.subheader("🔎 Explanation for Flagged Claim")
+                                st.write(f"🆔 Claim ID: {df.loc[index_to_explain, 'Claim ID']}")
+
+                                explainer = shap.TreeExplainer(classifier)
+                                shap_values = explainer.shap_values(X_transformed)
+
+                                shap_df = pd.DataFrame({
+                                    "Feature": preprocessor.get_feature_names_out(),
+                                    "SHAP Value": shap_values[1][index_to_explain]
+                                }).sort_values(by="SHAP Value", ascending=False)
+
+                                st.dataframe(shap_df.head(10))
+
+                        except Exception as e:
+                            st.error(f"SHAP error: {e}")
 
                     st.download_button("📥 Download Results", df.to_csv(index=False).encode("utf-8"),
                                        file_name=f"fraud_predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-
-                    # SHAP explanations (optional "Why is this fraud" logic placeholder)
-                    st.markdown("<br><b>Need more insight?</b> Click below to understand why claims were flagged:", unsafe_allow_html=True)
-                    if st.button("🤔 Explain Why This is Fraud"):
-                        try:
-                            explainer = shap.Explainer(model.named_steps['classifier'], model.named_steps['preprocessor'].transform(X))
-                            shap_values = explainer(model.named_steps['preprocessor'].transform(X))
-                            st.success("🧠 SHAP analysis complete!")
-                            st_shap = getattr(shap, "force_plot", None)
-                            if st_shap:
-                                st_shap(explainer.expected_value[1], shap_values[1], feature_names=X.columns)
-                        except Exception as e:
-                            st.error(f"SHAP error: {e}")
                 else:
                     st.error("⚠️ No trained model found. Please retrain below.")
             else:
@@ -128,6 +149,7 @@ if uploaded_file:
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
+# Retrain section
 st.markdown("---")
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>🧠 Retrain Fraud Detection Model</h4>", unsafe_allow_html=True)
 
@@ -182,6 +204,7 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                         </div>
                     """, unsafe_allow_html=True)
 
+                    # Feature importance for Random Forest
                     if model_choice == "Random Forest":
                         st.markdown("### 🧠 Top Influential Features")
                         importances = clf.feature_importances_
@@ -197,9 +220,13 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                         ax.set_title("Top Features Influencing Fraud Prediction")
                         st.pyplot(fig)
 
-                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training. Higher scores = more impact.")
+                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training. "
+                                   "Higher importance scores mean those fields had more weight in detecting potentially fraudulent claims.")
                     else:
                         st.info("ℹ️ Feature importance is only available for Random Forest models.")
+
+                        st.caption("🧠 Random Forest is a prediction model that combines the decisions of many 'mini-experts' to flag suspicious claims. "
+                                   "It’s accurate, flexible, and helps identify which data points mattered most.")
 
         except Exception as e:
             st.error(f"Training failed: {e}")
