@@ -24,7 +24,7 @@ def local_css(file_name):
 
 local_css("assets/custom.css")
 
-# Show logo only, centered with hover effect and custom size
+# Show logo only, centered with hover effect and larger size
 def show_logo():
     logo_path = "logo/claimsentinel_logo.png"
     with open(logo_path, "rb") as image_file:
@@ -37,7 +37,7 @@ def show_logo():
                 }}
             </style>
             <div class='logo-container' style='display: flex; justify-content: center; margin: 2rem 0;'>
-                <img src='data:image/png;base64,{encoded}' style='width:280px;' />
+                <img src='data:image/png;base64,{encoded}' style='width:340px;' />
             </div>
         """, unsafe_allow_html=True)
 
@@ -74,8 +74,6 @@ if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
         st.success("✅ File uploaded.")
-        st.subheader("Preview")
-        st.dataframe(df.head())
 
         mapping = fuzzy_column_map(df.columns.tolist(), required_columns)
         unmapped = [k for k, v in mapping.items() if v is None]
