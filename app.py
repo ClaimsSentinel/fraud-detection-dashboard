@@ -45,7 +45,7 @@ def show_logo():
                 }}
             </style>
             <div class='logo-container' style='display: flex; justify-content: center; margin: 2rem 0;'>
-                <img src='data:image/png;base64,{encoded}' style='width:260px;' />
+                <img src='data:image/png;base64,{encoded}' style='width:340px;' />
             </div>
         """, unsafe_allow_html=True)
 
@@ -77,7 +77,7 @@ model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 
 # --- Upload File Section ---
-st.markdown("<h4 style='font-size:22px; font-weight:600;'>📂 Upload CSV or Excel File</h4>", unsafe_allow_html=True)
+st.markdown("<h2 style='font-size:28px; font-weight:700; color:#1A237E;'>📂 Upload CSV or Excel File</h2>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
 if uploaded_file:
     try:
