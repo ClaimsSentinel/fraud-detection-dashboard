@@ -26,20 +26,31 @@ local_css("assets/custom.css")
 
 # Show logo only, centered with hover effect and larger size
 def show_logo():
-    logo_path = "logo/claimsentinel_logo.png"
-    with open(logo_path, "rb") as image_file:
-        encoded = base64.b64encode(image_file.read()).decode()
-        st.markdown(f"""
-            <style>
-                .logo-container img:hover {{
-                    transform: scale(1.05);
-                    transition: transform 0.3s ease;
-                }}
-            </style>
-            <div class='logo-container' style='display: flex; justify-content: center; margin: 2rem 0;'>
-                <img src='data:image/png;base64,{encoded}' style='width:340px;' />
-            </div>
-        """, unsafe_allow_html=True)
+from PIL import Image
+import base64
+import io
+
+def image_to_base64(img):
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
+
+def show_logo():
+    logo_path = "logo/claimsentinel_logo.png"  # Make sure this path matches your file
+    image = Image.open(logo_path)
+    encoded = image_to_base64(image)
+
+    st.markdown(f"""
+        <style>
+            .logo-container img:hover {{
+                transform: scale(1.07);
+                transition: transform 0.3s ease;
+            }}
+        </style>
+        <div class='logo-container' style='display: flex; justify-content: center; margin: 2rem 0;'>
+            <img src='data:image/png;base64,{encoded}' style='width:260px;' />
+        </div>
+    """, unsafe_allow_html=True)
 
 show_logo()
 
