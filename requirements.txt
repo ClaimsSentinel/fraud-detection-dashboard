@@ -6,3 +6,4 @@ matplotlib==3.8.4
 faker==24.8.0
 shap
 ipython
+openpyxl
