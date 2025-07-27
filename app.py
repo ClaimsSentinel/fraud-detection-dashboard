@@ -3,8 +3,6 @@ import pandas as pd
 import joblib
 import os
 import base64
-import io
-from PIL import Image
 from difflib import get_close_matches
 from datetime import datetime
 from sklearn.model_selection import train_test_split
@@ -15,19 +13,20 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report
 import matplotlib.pyplot as plt
+from PIL import Image
+import io
 
-# Page setup
+# --- CONFIGURATION ---
 st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
 
-# Load CSS
+# --- CUSTOM CSS ---
 def local_css(file_name):
     with open(file_name) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 local_css("assets/custom.css")
 
-# Logo rendering
-
+# --- LOGO ---
 def image_to_base64(img):
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
@@ -52,13 +51,20 @@ def show_logo():
 
 show_logo()
 
-# Required columns
+# --- REQUIRED COLUMNS ---
 required_columns = [
-    "Claim Amount", "Previous Claims Count", "Claim Location", "Vehicle Make/Model",
-    "Claim Description", "Claim ID", "Adjuster Notes", "Date of Claim", "Policyholder ID"
+    "Claim Amount",
+    "Previous Claims Count",
+    "Claim Location",
+    "Vehicle Make/Model",
+    "Claim Description",
+    "Claim ID",
+    "Adjuster Notes",
+    "Date of Claim",
+    "Policyholder ID"
 ]
 
-# Fuzzy column matcher
+# --- FUZZY COLUMN MAPPING ---
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
     mapping = {}
     for req_col in required_cols:
@@ -66,17 +72,25 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
         mapping[req_col] = match[0] if match else None
     return mapping
 
-# Load model
+# --- CLEANING FUNCTION ---
+def clean_dataframe(df):
+    for col in df.columns:
+        if isinstance(df[col].iloc[0], list):
+            df[col] = df[col].apply(lambda x: str(x))
+    return df
+
+# --- LOAD MODEL ---
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 
-# Upload section
+# --- UPLOAD SECTION ---
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>📂 Upload CSV or Excel File</h4>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
 
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
+        df = clean_dataframe(df)
         st.success("✅ File uploaded.")
 
         mapping = fuzzy_column_map(df.columns.tolist(), required_columns)
@@ -93,7 +107,8 @@ if uploaded_file:
                     df["Fraud Prediction"] = preds
 
                     st.subheader("🔎 Predictions")
-                    st.dataframe(df[df["Fraud Prediction"] == 1][["Claim ID", "Fraud Prediction"]], use_container_width=True)
+                    fraud_df = df[df["Fraud Prediction"] == 1]
+                    st.dataframe(fraud_df[required_columns + ["Fraud Prediction"]], use_container_width=True)
 
                     st.markdown(f"""
                         <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
@@ -106,10 +121,10 @@ if uploaded_file:
 
                     # SHAP explanations for flagged fraud predictions
                     st.markdown("<br><b>Need more insight?</b> Click below to understand why claims were flagged:", unsafe_allow_html=True)
-
                     if st.button("Explain Why This Is Fraud"):
                         try:
                             import shap
+                            import IPython
                             shap.initjs()
 
                             preprocessor = model.named_steps["preprocessor"]
@@ -143,7 +158,7 @@ if uploaded_file:
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
-# Retraining Section
+# --- RETRAIN SECTION ---
 st.markdown("---")
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>🧠 Retrain Fraud Detection Model</h4>", unsafe_allow_html=True)
 
@@ -154,6 +169,8 @@ with st.expander("📚 Upload labeled data to retrain the model"):
     if train_file:
         try:
             train_df = pd.read_csv(train_file) if train_file.name.endswith(".csv") else pd.read_excel(train_file)
+            train_df = clean_dataframe(train_df)
+
             if "Fraud Label" not in train_df.columns:
                 st.error("Missing 'Fraud Label' column.")
             else:
@@ -213,6 +230,9 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                         ax.set_title("Top Features Influencing Fraud Prediction")
                         st.pyplot(fig)
 
-                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training. These insights are based on the retrained Random Forest model.")
+                        st.caption("🔎 This chart shows which features most influenced the fraud prediction model after training.")
                     else:
                         st.info("ℹ️ Feature importance is only available for Random Forest models.")
+
+        except Exception as e:
+            st.error(f"Training failed: {e}")
