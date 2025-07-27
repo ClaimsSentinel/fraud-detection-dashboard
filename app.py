@@ -1,3 +1,4 @@
+# app.py - Final Version with SHAP Fix and UI Enhancements
 
 import streamlit as st
 import pandas as pd
@@ -6,11 +7,9 @@ import os
 import base64
 import io
 import numpy as np
-import shap
-import matplotlib.pyplot as plt
-from pathlib import Path
 from difflib import get_close_matches
 from datetime import datetime
+from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -18,20 +17,16 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report
+import matplotlib.pyplot as plt
 from PIL import Image
 
-# Streamlit settings
+# --- Page Setup ---
 st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
-
-# Load local CSS
-def local_css(file_name):
-    with open(file_name) as f:
+if Path("assets/custom.css").exists():
+    with open("assets/custom.css") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-if Path("assets/custom.css").exists():
-    local_css("assets/custom.css")
-
-# Show logo
+# --- Logo ---
 def image_to_base64(img):
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
@@ -56,18 +51,14 @@ def show_logo():
 
 show_logo()
 
-# Columns and utilities
+# --- Config ---
 required_columns = [
-    "Claim Amount",
-    "Previous Claims Count",
-    "Claim Location",
-    "Vehicle Make/Model",
-    "Claim Description",
-    "Claim ID",
-    "Adjuster Notes",
-    "Date of Claim",
-    "Policyholder ID"
+    "Claim Amount", "Previous Claims Count", "Claim Location",
+    "Vehicle Make/Model", "Claim Description", "Claim ID",
+    "Adjuster Notes", "Date of Claim", "Policyholder ID"
 ]
+model_path = "model.pkl"
+model = joblib.load(model_path) if os.path.exists(model_path) else None
 
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
     mapping = {}
@@ -76,10 +67,7 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
         mapping[req_col] = match[0] if match else None
     return mapping
 
-model_path = "model.pkl"
-model = joblib.load(model_path) if os.path.exists(model_path) else None
-
-# Upload section
+# --- Upload & Prediction ---
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>📂 Upload CSV or Excel File</h4>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
 
@@ -89,56 +77,74 @@ if uploaded_file:
         st.success("✅ File uploaded.")
 
         mapping = fuzzy_column_map(df.columns.tolist(), required_columns)
-        df = df.rename(columns={v: k for k, v in mapping.items() if v})
-        if not all(col in df.columns for col in required_columns):
-            st.error("❌ Missing required columns after mapping.")
+        unmapped = [k for k, v in mapping.items() if v is None]
+        if unmapped:
+            st.warning(f"⚠️ Could not map: {', '.join(unmapped)}")
         else:
-            X = df[required_columns]
+            df = df.rename(columns={v: k for k, v in mapping.items() if v})
+            if all(col in df.columns for col in required_columns):
+                X = df[required_columns]
 
-            if model:
-                preds = model.predict(X)
-                df["Fraud Prediction"] = preds
-                fraud_df = df[df["Fraud Prediction"] == 1]
+                if model:
+                    preds = model.predict(X)
+                    df["Fraud Prediction"] = preds
 
-                st.subheader("🔎 Predictions")
-                st.dataframe(fraud_df[["Claim ID", "Fraud Prediction"]], use_container_width=True)
+                    st.subheader("🔎 Predictions")
+                    fraud_df = df[df["Fraud Prediction"] == 1]
+                    st.dataframe(fraud_df, use_container_width=True)
 
-                st.markdown(f"""
-                    <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
-                        📊 <b>Total claims:</b> {len(df)} &nbsp;&nbsp;|&nbsp;&nbsp; ⚠️ <b>Flagged as fraud:</b> {df['Fraud Prediction'].sum()}
-                    </div>
-                """, unsafe_allow_html=True)
+                    st.markdown(f"""
+                        <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
+                            📊 <b>Total claims:</b> {len(df)} &nbsp;&nbsp;|&nbsp;&nbsp; ⚠️ <b>Flagged as fraud:</b> {fraud_df.shape[0]}
+                        </div>
+                    """, unsafe_allow_html=True)
 
-                if fraud_df.shape[0] > 0:
-                    st.markdown("<br><b>Need more insight?</b> Click below to understand why claims were flagged:", unsafe_allow_html=True)
-                    if st.button("Explain Why This Is Fraud"):
-                        try:
-                            shap.initjs()
-                            preprocessor = model.named_steps["preprocessor"]
-                            classifier = model.named_steps["classifier"]
-                            X_transformed = preprocessor.transform(X)
-                            X_dense = X_transformed.toarray() if hasattr(X_transformed, "toarray") else X_transformed
-                            X_numeric = np.array(X_dense, dtype=np.float64)
-                            explainer = shap.TreeExplainer(classifier)
-                            shap_values = explainer.shap_values(X_numeric)
+                    st.download_button("📥 Download Results", df.to_csv(index=False).encode("utf-8"),
+                                       file_name=f"fraud_predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
 
-                            index_to_explain = fraud_df.index[0]
-                            st.markdown(f"**Explaining Claim ID:** `{df.loc[index_to_explain, 'Claim ID']}`")
-                            shap_df = pd.DataFrame({
-                                "Feature": preprocessor.get_feature_names_out(),
-                                "SHAP Value": shap_values[1][index_to_explain]
-                            }).sort_values(by="SHAP Value", ascending=False)
+                    # --- SHAP Explanation ---
+                    if fraud_df.shape[0] > 0:
+                        st.markdown("<br><b>Need more insight?</b> Click below to understand why claims were flagged:", unsafe_allow_html=True)
+                        if st.button("Explain Why This Is Fraud"):
+                            try:
+                                import shap
+                                shap.initjs()
 
-                            st.markdown("Top factors contributing to this fraud prediction:")
-                            st.dataframe(shap_df.head(10), use_container_width=True)
-                        except Exception as e:
-                            st.error(f"SHAP error: {e}")
+                                preprocessor = model.named_steps["preprocessor"]
+                                classifier = model.named_steps["classifier"]
+                                X_transformed = preprocessor.transform(X)
+
+                                X_dense = X_transformed.toarray() if hasattr(X_transformed, "toarray") else X_transformed
+                                X_numeric = np.array(X_dense, dtype=np.float64)
+
+                                explainer = shap.TreeExplainer(classifier)
+                                shap_values = explainer.shap_values(X_numeric)
+
+                                feature_names = preprocessor.get_feature_names_out()
+                                index_to_explain = fraud_df.index[0]
+                                shap_row = shap_values[1][index_to_explain]
+
+                                if len(shap_row) != len(feature_names):
+                                    st.error("SHAP mismatch: feature name count does not match value count.")
+                                else:
+                                    shap_df = pd.DataFrame({
+                                        "Feature": feature_names,
+                                        "SHAP Value": shap_row
+                                    }).sort_values(by="SHAP Value", ascending=False)
+
+                                    st.markdown(f"**Explaining Claim ID:** `{df.loc[index_to_explain, 'Claim ID']}`")
+                                    st.markdown("Top factors contributing to this fraud prediction:")
+                                    st.dataframe(shap_df.head(10), use_container_width=True)
+                            except Exception as e:
+                                st.error(f"SHAP error: {e}")
+                else:
+                    st.error("⚠️ No trained model found. Please retrain below.")
             else:
-                st.error("⚠️ No trained model found. Please retrain below.")
+                st.error("❌ Missing required columns after mapping.")
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
-# Retrain section
+# --- Retraining ---
 st.markdown("---")
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>🧠 Retrain Fraud Detection Model</h4>", unsafe_allow_html=True)
 
@@ -153,61 +159,61 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                 st.error("Missing 'Fraud Label' column.")
             else:
                 mapping = fuzzy_column_map(train_df.columns.tolist(), required_columns)
-                train_df = train_df.rename(columns={v: k for k, v in mapping.items() if v})
-                X = train_df[required_columns]
-                y = train_df["Fraud Label"]
-
-                numeric = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
-                categoricals = X.select_dtypes(include=["object"]).columns.tolist()
-
-                preprocessor = ColumnTransformer([
-                    ("num", StandardScaler(), numeric),
-                    ("cat", OneHotEncoder(sparse=False, handle_unknown="ignore"), categoricals)
-                ])
-
-                clf = LogisticRegression(max_iter=1000) if model_choice == "Logistic Regression" else RandomForestClassifier(n_estimators=100, random_state=42)
-
-                pipeline = Pipeline([
-                    ("preprocessor", preprocessor),
-                    ("classifier", clf)
-                ])
-
-                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-                pipeline.fit(X_train, y_train)
-                y_pred = pipeline.predict(X_test)
-
-                joblib.dump(pipeline, model_path)
-                model = pipeline
-
-                st.success(f"✅ {model_choice} model trained and saved.")
-                st.text("📊 Classification Report")
-                st.text(classification_report(y_test, y_pred))
-
-                st.markdown(f"""
-                    <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
-                        ✅ <b>Model trained on:</b> {len(train_df)} claims
-                    </div>
-                """, unsafe_allow_html=True)
-
-                if model_choice == "Random Forest":
-                    st.markdown("### 🧠 Top Influential Features")
-                    importances = clf.feature_importances_
-                    feature_names = pipeline.named_steps['preprocessor'].get_feature_names_out()
-                    importance_df = pd.DataFrame({
-                        "Feature": feature_names,
-                        "Importance": importances
-                    }).sort_values(by="Importance", ascending=False).head(10)
-
-                    fig, ax = plt.subplots(figsize=(8, 5))
-                    ax.barh(importance_df["Feature"], importance_df["Importance"], color="skyblue")
-                    ax.set_xlabel("Importance Score")
-                    ax.set_title("Top Features Influencing Fraud Prediction")
-                    st.pyplot(fig)
-
-                    st.caption("🔎 These features had the most impact on the fraud prediction model. Higher values = greater influence.")
+                missing = [k for k, v in mapping.items() if v is None]
+                if missing:
+                    st.warning(f"⚠️ Missing columns: {', '.join(missing)}")
                 else:
-                    st.info("ℹ️ Feature importance is only available for Random Forest models.")
+                    train_df = train_df.rename(columns={v: k for k, v in mapping.items() if v})
+                    X = train_df[required_columns]
+                    y = train_df["Fraud Label"]
 
+                    numeric = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
+                    categoricals = X.select_dtypes(include=["object"]).columns.tolist()
 
+                    preprocessor = ColumnTransformer([
+                        ("num", StandardScaler(), numeric),
+                        ("cat", OneHotEncoder(handle_unknown="ignore"), categoricals)
+                    ])
+
+                    clf = LogisticRegression(max_iter=1000) if model_choice == "Logistic Regression" else RandomForestClassifier(n_estimators=100, random_state=42)
+
+                    pipeline = Pipeline([
+                        ("preprocessor", preprocessor),
+                        ("classifier", clf)
+                    ])
+
+                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+                    pipeline.fit(X_train, y_train)
+                    y_pred = pipeline.predict(X_test)
+
+                    joblib.dump(pipeline, model_path)
+                    model = pipeline
+
+                    st.success(f"✅ {model_choice} model trained and saved.")
+                    st.text("📊 Classification Report")
+                    st.text(classification_report(y_test, y_pred))
+
+                    st.markdown(f"""
+                        <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
+                            ✅ <b>Model trained on:</b> {len(train_df)} claims
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                    if model_choice == "Random Forest":
+                        st.markdown("### 🧠 Top Influential Features")
+                        importances = clf.feature_importances_
+                        feature_names = pipeline.named_steps['preprocessor'].get_feature_names_out()
+                        importance_df = pd.DataFrame({
+                            "Feature": feature_names,
+                            "Importance": importances
+                        }).sort_values(by="Importance", ascending=False).head(10)
+
+                        fig, ax = plt.subplots(figsize=(8, 5))
+                        ax.barh(importance_df["Feature"], importance_df["Importance"], color="skyblue")
+                        ax.set_xlabel("Importance Score")
+                        ax.set_title("Top Features Influencing Fraud Prediction")
+                        st.pyplot(fig)
+
+                        st.caption("🔎 These features had the most impact on the fraud prediction model.")
         except Exception as e:
             st.error(f"Training failed: {e}")
