@@ -80,7 +80,8 @@ model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 
 # File uploader
-uploaded_file = st.file_uploader("📂 Upload CSV or Excel File", type=["csv", "xlsx"])
+st.markdown("<h4 style='font-size:22px; font-weight:600;'>📂 Upload CSV or Excel File</h4>", unsafe_allow_html=True)
+uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
