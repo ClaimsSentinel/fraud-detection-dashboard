@@ -13,6 +13,32 @@ from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report
 import matplotlib.pyplot as plt
 
+import base64
+
+# Inject custom CSS for fonts and colors
+def local_css(file_name):
+    with open(file_name) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+local_css("assets/custom.css")
+
+# Display logo and header
+def show_logo():
+    logo_path = "logo/claimsentinel_logo.png"
+    with open(logo_path, "rb") as image_file:
+        encoded = base64.b64encode(image_file.read()).decode()
+        st.markdown(f'''
+            <div style="display: flex; align-items: center;">
+                <img src="data:image/png;base64,{encoded}" width="60"/>
+                <div style="padding-left: 1rem;">
+                    <h1 style="margin-bottom: 0;">ClaimsSentinel</h1>
+                    <div style="color:#F57C00; font-size: 18px; margin-top: -5px;">Smart insights. Safer claims.</div>
+                </div>
+            </div>
+        ''', unsafe_allow_html=True)
+
+show_logo()
+
 # Optional for SHAP
 try:
     import shap
