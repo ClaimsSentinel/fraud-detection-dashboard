@@ -24,7 +24,7 @@ local_css("assets/custom.css")
 
 # Display logo and header
 def show_logo():
-    logo_path = "logo/ClaimsSentinel Logo Design-3.png"
+    logo_path = "logo/claimsentinel_logo.png"
     with open(logo_path, "rb") as image_file:
         encoded = base64.b64encode(image_file.read()).decode()
         st.markdown(f'''
