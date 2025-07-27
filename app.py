@@ -1,5 +1,3 @@
-# app.py - ClaimsSentinel Fraud Detection with SHAP and UI Enhancements
-
 import streamlit as st
 import pandas as pd
 import joblib
@@ -21,14 +19,15 @@ import numpy as np
 
 st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
 
-# CSS injection
+# Load local CSS
 def local_css(file_name):
     with open(file_name) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 local_css("assets/custom.css")
 
-# Logo rendering
+# Display logo
+
 def image_to_base64(img):
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
@@ -53,17 +52,10 @@ def show_logo():
 
 show_logo()
 
-# Required columns
 required_columns = [
-    "Claim Amount",
-    "Previous Claims Count",
-    "Claim Location",
-    "Vehicle Make/Model",
-    "Claim Description",
-    "Claim ID",
-    "Adjuster Notes",
-    "Date of Claim",
-    "Policyholder ID"
+    "Claim Amount", "Previous Claims Count", "Claim Location",
+    "Vehicle Make/Model", "Claim Description", "Claim ID",
+    "Adjuster Notes", "Date of Claim", "Policyholder ID"
 ]
 
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
@@ -76,7 +68,7 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 
-# File upload
+# Upload data
 st.markdown("<h4 style='font-size:22px; font-weight:600;'>📂 Upload CSV or Excel File</h4>", unsafe_allow_html=True)
 uploaded_file = st.file_uploader(label="", type=["csv", "xlsx"])
 
@@ -98,19 +90,23 @@ if uploaded_file:
                     preds = model.predict(X)
                     df["Fraud Prediction"] = preds
 
-                    fraud_df = df[df["Fraud Prediction"] == 1]
-
                     st.subheader("🔎 Predictions")
-                    st.dataframe(fraud_df[["Claim ID", "Fraud Prediction"]], use_container_width=True)
+                    fraud_df = df[df["Fraud Prediction"] == 1]
+                    st.dataframe(fraud_df, use_container_width=True, height=400)
 
                     st.markdown(f"""
                         <div style='padding: 10px; background-color: #f5f5f5; border-radius: 10px;'>
-                            📊 <b>Total claims:</b> {len(df)} &nbsp;&nbsp;|&nbsp;&nbsp; ⚠️ <b>Flagged as fraud:</b> {len(fraud_df)}
+                            📊 <b>Total claims:</b> {len(df)} &nbsp;&nbsp;|&nbsp;&nbsp; ⚠️ <b>Flagged as fraud:</b> {df['Fraud Prediction'].sum()}
                         </div>
                     """, unsafe_allow_html=True)
 
-                    if len(fraud_df) > 0:
+                    st.download_button("📥 Download Results", df.to_csv(index=False).encode("utf-8"),
+                                       file_name=f"fraud_predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+
+                    # SHAP insight
+                    if fraud_df.shape[0] > 0:
                         st.markdown("<br><b>Need more insight?</b> Click below to understand why claims were flagged:", unsafe_allow_html=True)
+
                         if st.button("Explain Why This Is Fraud"):
                             try:
                                 import shap
@@ -121,29 +117,36 @@ if uploaded_file:
                                 X_transformed = preprocessor.transform(X)
 
                                 index_to_explain = fraud_df.index[0]
-
                                 st.markdown(f"**Explaining Claim ID:** `{df.loc[index_to_explain, 'Claim ID']}`")
 
-                                explainer = shap.TreeExplainer(classifier)
                                 X_dense = X_transformed.toarray() if hasattr(X_transformed, "toarray") else X_transformed
                                 X_numeric = np.array(X_dense, dtype=np.float64)
 
+                                explainer = shap.TreeExplainer(classifier)
                                 shap_values = explainer.shap_values(X_numeric)
+                                if isinstance(shap_values, list):
+                                    shap_values = shap_values[1]
 
-                                shap_df = pd.DataFrame({
-                                    "Feature": preprocessor.get_feature_names_out(),
-                                    "SHAP Value": shap_values[1][index_to_explain]
-                                }).sort_values(by="SHAP Value", ascending=False)
+                                feature_names = preprocessor.get_feature_names_out()
+                                if shap_values.shape[1] != len(feature_names):
+                                    st.error("Mismatch between SHAP values and feature names.")
+                                else:
+                                    shap_df = pd.DataFrame({
+                                        "Feature": feature_names,
+                                        "SHAP Value": shap_values[index_to_explain]
+                                    }).sort_values(by="SHAP Value", ascending=False)
 
-                                st.markdown("Top factors contributing to this fraud prediction:")
-                                st.dataframe(shap_df.head(10), use_container_width=True)
+                                    st.markdown("Top factors contributing to this fraud prediction:")
+                                    st.dataframe(shap_df.head(10), use_container_width=True)
 
                             except Exception as e:
                                 st.error(f"SHAP error: {e}")
+
                 else:
                     st.error("⚠️ No trained model found. Please retrain below.")
             else:
                 st.error("❌ Missing required columns after mapping.")
+
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
@@ -217,7 +220,7 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                         ax.set_title("Top Features Influencing Fraud Prediction")
                         st.pyplot(fig)
 
-                        st.caption("🔎 These features had the most impact on the fraud prediction model. Use them to inform risk mitigation efforts.")
+                        st.caption("🔎 These features had the most impact on the fraud prediction model.")
                     else:
                         st.info("ℹ️ Feature importance is only available for Random Forest models.")
 
