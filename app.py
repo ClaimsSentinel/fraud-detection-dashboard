@@ -20,7 +20,11 @@ import io
 import shap
 import numpy as np
 
-st.set_page_config(page_title="Insurance Fraud Detection", layout="centered")
+st.set_page_config(
+    page_title="ClaimsSentinel",
+    page_icon="logo/claimsentinel_favicon.png",  # or .ico if you prefer
+    layout="centered"
+)
 
 def local_css(file_name):
     with open(file_name) as f:
