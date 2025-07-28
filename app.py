@@ -142,7 +142,10 @@ with st.expander("📚 Upload labeled training data"):
         else:
             df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
             X = df[REQUIRED_COLUMNS]
-            y = df["Fraud Label"]
+            y = pd.to_numeric(df["Fraud Label"], errors="coerce")
+            if y.isnull().any():
+                st.error("⚠️ Some values in 'Fraud Label' could not be interpreted as 0 or 1. Please check your training file.")
+                st.stop()
 
             numeric = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
             categoricals = X.select_dtypes(include=["object", "category"]).columns.tolist()
