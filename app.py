@@ -20,13 +20,15 @@ from PIL import Image
 
 st.set_page_config(page_title="ClaimsSentinel", layout="centered")
 
-# Display high-res centered logo
+# Display centered, high-resolution logo only
 logo_path = "logo/claimsentinel_logo.png"
 if os.path.exists(logo_path):
     image = Image.open(logo_path)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.image(image, use_column_width=False, width=420)
+    st.markdown("""
+        <div style='display: flex; justify-content: center; margin-top: 1rem;'>
+            <img src='data:image/png;base64,""" + BytesIO(image.tobytes()).getvalue().hex() + """' style='width: 400px;'/>
+        </div>
+    """, unsafe_allow_html=True)
 
 REQUIRED_COLUMNS = [
     "Claim Amount", "Previous Claims Count", "Claim Location",
@@ -34,15 +36,33 @@ REQUIRED_COLUMNS = [
     "Adjuster Notes", "Date of Claim", "Policyholder ID"
 ]
 
-# Fuzzy column mapping
+FALLBACK_COLUMN_MAP = {
+    "Claim Amount": ["Total Claim Value"],
+    "Previous Claims Count": ["Num Prev Claims"],
+    "Claim Location": ["Incident Locale"],
+    "Vehicle Make/Model": ["Vehicle Brand/Model"],
+    "Claim Description": ["Incident Summary"],
+    "Claim ID": ["Ref ID"],
+    "Adjuster Notes": ["Adjuster Comments"],
+    "Date of Claim": ["Filing Date"],
+    "Policyholder ID": ["Insured Party ID"]
+}
+
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.6):
     mapping = {}
     for req in required_cols:
         match = get_close_matches(req, uploaded_cols, n=1, cutoff=cutoff)
-        mapping[req] = match[0] if match else None
+        if match:
+            mapping[req] = match[0]
+        else:
+            for fallback in FALLBACK_COLUMN_MAP.get(req, []):
+                if fallback in uploaded_cols:
+                    mapping[req] = fallback
+                    break
+            else:
+                mapping[req] = None
     return mapping
 
-# Clean numbers
 def clean_dataframe(df):
     for col in df.select_dtypes(include='object').columns:
         df[col] = df[col].str.replace(r'[$,]', '', regex=True)
@@ -53,7 +73,7 @@ model = joblib.load(model_path) if os.path.exists(model_path) else None
 explainer = None
 
 st.markdown("<div style='width:600px;'>", unsafe_allow_html=True)
-st.subheader("Upload Claims File")
+st.subheader("📂 Upload Claims File")
 file = st.file_uploader("", type=["csv", "xlsx"], key="predict")
 
 if file:
@@ -99,7 +119,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("---")
 st.markdown("<div style='width:600px;'>", unsafe_allow_html=True)
-st.subheader("Retrain Model")
+st.subheader("🧠 Retrain Model")
 with st.expander("Upload labeled training data"):
     train_file = st.file_uploader("Upload training file with 'Fraud Label' column", type=["csv", "xlsx"], key="train")
     model_choice = st.radio("Choose model", ["Logistic Regression", "Random Forest"])
