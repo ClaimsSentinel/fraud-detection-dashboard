@@ -4,6 +4,7 @@ import numpy as np
 import joblib
 import shap
 import os
+import base64
 from io import BytesIO
 from difflib import get_close_matches
 from datetime import datetime
