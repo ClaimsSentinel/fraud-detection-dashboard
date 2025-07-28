@@ -1,5 +1,3 @@
-# ClaimsSentinel Final app.py with logo-only branding, full fuzzy mapping, Excel support, SHAP explanations, Misty Rose highlight
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -18,16 +16,22 @@ from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
-import matplotlib.pyplot as plt
 from PIL import Image
 
 st.set_page_config(page_title="ClaimsSentinel", layout="centered")
 
-# Display logo only
+# Load and center logo
 logo_path = "logo/claimsentinel_logo.png"
 if os.path.exists(logo_path):
-    image = Image.open(logo_path)
-    st.image(image, use_column_width=False, width=400)
+    encoded_logo = base64.b64encode(open(logo_path, "rb").read()).decode()
+    st.markdown(
+        f"""
+        <div style='text-align: center;'>
+            <img src='data:image/png;base64,{encoded_logo}' style='width: 400px;'/>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 REQUIRED_COLUMNS = [
     "Claim Amount", "Previous Claims Count", "Claim Location",
@@ -35,7 +39,7 @@ REQUIRED_COLUMNS = [
     "Adjuster Notes", "Date of Claim", "Policyholder ID"
 ]
 
-# Fuzzy mapping function
+# Fuzzy mapping
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.6):
     mapping = {}
     for req in required_cols:
@@ -43,21 +47,19 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.6):
         mapping[req] = match[0] if match else None
     return mapping
 
-# Clean numbers
+# Clean numeric fields
 def clean_dataframe(df):
-    for col in df.columns:
-        if df[col].dtype == object:
-            df[col] = df[col].astype(str).str.replace(r'[$,]', '', regex=True)
-            df[col] = pd.to_numeric(df[col], errors='ignore')
+    for col in df.select_dtypes(include='object').columns:
+        df[col] = df[col].str.replace(r'[$,]', '', regex=True)
     return df
 
-# Load model if available
+# Load model
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 explainer = None
 
 st.markdown("<div style='width:600px;'>", unsafe_allow_html=True)
-st.subheader("Upload Claims File")
+st.subheader("📁 Upload Claims File")
 file = st.file_uploader("", type=["csv", "xlsx"], key="predict")
 
 if file:
@@ -86,22 +88,27 @@ if file:
 
                 st.dataframe(df.style.apply(highlight_fraud, axis=1), use_container_width=True)
 
-                # Row click-to-explain
-                selected_row = st.selectbox("Select a claim to explain:", df.index[df["Potential Fraud"] == 1].tolist())
+                fraud_rows = df[df["Potential Fraud"] == 1]
+                selected_row = st.selectbox("Select a claim to explain:", fraud_rows.index.tolist())
                 if st.button("Explain why this is potential fraud"):
                     if explainer is None:
                         explainer = shap.Explainer(model.named_steps['classifier'])
                         X_transformed = model.named_steps['preprocessor'].transform(X)
                     shap_values = explainer(X_transformed)
-                    shap.initjs()
-                    st_shap = shap.plots.waterfall(shap_values[selected_row], show=False)
-                    st.pyplot(bbox_inches='tight')
+                    st.pyplot(shap.plots.waterfall(shap_values[selected_row], show=False))
 
-                # Download as Excel
+                top_features = []
+                if explainer is not None:
+                    for i in range(len(df)):
+                        vals = explainer(X_transformed[i])
+                        sorted_features = sorted(zip(vals.values, vals.data), key=lambda x: abs(x[0]), reverse=True)
+                        reasons = ", ".join([str(f[1]) for f in sorted_features[:2]])
+                        top_features.append(reasons)
+                    df["Potential Fraud Factors"] = top_features
+
                 out = BytesIO()
                 df.to_excel(out, index=False)
-                st.download_button("Download Results (Excel)", out.getvalue(), file_name="results.xlsx")
-
+                st.download_button("📤 Download Results (Excel)", out.getvalue(), file_name="results.xlsx")
             except Exception as e:
                 st.error(f"Prediction error: {e}")
         else:
@@ -111,7 +118,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("---")
 st.markdown("<div style='width:600px;'>", unsafe_allow_html=True)
-st.subheader("Retrain Model")
+st.subheader("🧠 Retrain Model")
 with st.expander("Upload labeled training data"):
     train_file = st.file_uploader("Upload training file with 'Fraud Label' column", type=["csv", "xlsx"], key="train")
     model_choice = st.radio("Choose model", ["Logistic Regression", "Random Forest"])
@@ -125,6 +132,11 @@ with st.expander("Upload labeled training data"):
         else:
             df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
             X = df[REQUIRED_COLUMNS]
+            X = X.copy()
+            for col in X.select_dtypes(include='object').columns:
+                X[col] = X[col].astype(str)
+            if "Date of Claim" in X.columns:
+                X["Date of Claim"] = X["Date of Claim"].astype(str)
             y = pd.to_numeric(df["Fraud Label"], errors="coerce")
             if y.isnull().any():
                 st.error("⚠️ Some values in 'Fraud Label' could not be interpreted as 0 or 1. Please check your training file.")
