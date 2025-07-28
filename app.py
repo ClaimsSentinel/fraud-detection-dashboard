@@ -1,3 +1,5 @@
+# ClaimsSentinel Final app.py with logo-only branding, full fuzzy mapping, Excel support, SHAP explanations, Misty Rose highlight
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -20,18 +22,14 @@ from PIL import Image
 
 st.set_page_config(page_title="ClaimsSentinel", layout="centered")
 
-# Display high-def, centered logo
+# Display logo only
 logo_path = "logo/claimsentinel_logo.png"
 if os.path.exists(logo_path):
     image = Image.open(logo_path)
-    from base64 import b64encode
-    import io
-    buf = io.BytesIO()
-    image.save(buf, format="PNG")
-    encoded = b64encode(buf.getvalue()).decode()
-    st.markdown(f"""
+    st.markdown("""
         <div style='display: flex; justify-content: center; margin-top: 1rem;'>
-            <img src='data:image/png;base64,{encoded}' style='width: 400px;'/>
+            <img src='data:image/png;base64,""" + \
+        base64.b64encode(open(logo_path, "rb").read()).decode() + """' style='width: 400px;'/>
         </div>
     """, unsafe_allow_html=True)
 
@@ -41,40 +39,33 @@ REQUIRED_COLUMNS = [
     "Adjuster Notes", "Date of Claim", "Policyholder ID"
 ]
 
-# Fuzzy mapping
-fuzzy_synonyms = {
-    "Total Claim Value": "Claim Amount",
-    "Num Prev Claims": "Previous Claims Count",
-    "Incident Locale": "Claim Location",
-    "Vehicle Brand/Model": "Vehicle Make/Model",
-    "Incident Summary": "Claim Description",
-    "Ref ID": "Claim ID",
-    "Adjuster Comments": "Adjuster Notes",
-    "Filing Date": "Date of Claim",
-    "Insured Party ID": "Policyholder ID",
-    "Likely Fraud?": "Fraud Label"
-}
-
+# Fuzzy mapping function
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.6):
     mapping = {}
     for req in required_cols:
-        if req in uploaded_cols:
-            mapping[req] = req
-        else:
-            match = get_close_matches(req, uploaded_cols, n=1, cutoff=cutoff)
-            if match:
-                mapping[req] = match[0]
-            else:
-                fuzzy_match = [col for col in uploaded_cols if fuzzy_synonyms.get(col) == req]
-                mapping[req] = fuzzy_match[0] if fuzzy_match else None
+        match = get_close_matches(req, uploaded_cols, n=1, cutoff=cutoff)
+        mapping[req] = match[0] if match else None
     return mapping
 
+# Clean numbers
 def clean_dataframe(df):
     for col in df.select_dtypes(include='object').columns:
         df[col] = df[col].str.replace(r'[$,]', '', regex=True)
-        df[col] = pd.to_numeric(df[col], errors='ignore')
     return df
 
+# Coerce and fix unexpected datatypes
+def sanitize_prediction_data(df):
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].astype(str)
+        elif pd.api.types.is_object_dtype(df[col]):
+            try:
+                df[col] = pd.to_numeric(df[col], errors='ignore')
+            except:
+                pass
+    return df
+
+# Load model if available
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 explainer = None
@@ -86,39 +77,23 @@ file = st.file_uploader("", type=["csv", "xlsx"], key="predict")
 if file:
     df = pd.read_csv(file) if file.name.endswith(".csv") else pd.read_excel(file)
     df = clean_dataframe(df)
+    df = sanitize_prediction_data(df)
     mapping = fuzzy_column_map(df.columns.tolist(), REQUIRED_COLUMNS)
     if any(v is None for v in mapping.values()):
         st.error("Missing columns: " + ", ".join([k for k, v in mapping.items() if v is None]))
     else:
         df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
         X = df[REQUIRED_COLUMNS].copy()
-
-        # Fix: prepare all fields properly
         X = X.fillna("")
         for col in X.select_dtypes(include=['object', 'category']).columns:
             X[col] = X[col].astype(str)
 
         if model:
             try:
-                # Transform and predict
                 X_transformed = model.named_steps['preprocessor'].transform(X)
                 preds = model.named_steps['classifier'].predict(X_transformed)
                 df["Potential Fraud"] = preds
-
-                # SHAP setup
-                explainer = shap.Explainer(model.named_steps['classifier'], X_transformed)
-                shap_values = explainer(X_transformed)
-
-                def top_fraud_factors(shap_vals, feature_names):
-                    result = []
-                    for i in range(len(shap_vals)):
-                        vals = shap_vals[i].values
-                        top_idxs = np.argsort(np.abs(vals))[-2:][::-1]
-                        signs = ["↑" if vals[j] > 0 else "↓" for j in top_idxs]
-                        result.append(", ".join([f"{feature_names[j]} {signs[k]}" for k, j in enumerate(top_idxs)]))
-                    return result
-
-                df["Potential Fraud Factors"] = top_fraud_factors(shap_values, explainer.feature_names)
+                st.success(f"{sum(preds)} claims flagged as potential fraud")
 
                 def highlight_fraud(row):
                     return ['background-color: MistyRose' if row["Potential Fraud"] == 1 else '' for _ in row]
@@ -127,9 +102,31 @@ if file:
 
                 selected_row = st.selectbox("Select a claim to explain:", df.index[df["Potential Fraud"] == 1].tolist())
                 if st.button("Explain why this is potential fraud"):
-                    shap.plots.waterfall(shap_values[selected_row], show=False)
+                    if explainer is None:
+                        explainer = shap.Explainer(model.named_steps['classifier'])
+                        X_transformed = model.named_steps['preprocessor'].transform(X)
+                    shap_values = explainer(X_transformed)
+                    shap.initjs()
+                    st_shap = shap.plots.waterfall(shap_values[selected_row], show=False)
                     st.pyplot(bbox_inches='tight')
 
+                # SHAP Export Column
+                if explainer is None:
+                    explainer = shap.Explainer(model.named_steps['classifier'])
+                    X_transformed = model.named_steps['preprocessor'].transform(X)
+                shap_values = explainer(X_transformed)
+                top_factors = []
+                for i in range(len(df)):
+                    if df.loc[i, "Potential Fraud"] == 1:
+                        sv = shap_values[i]
+                        top = sorted(zip(sv.values, sv.feature_names), key=lambda x: abs(x[0]), reverse=True)[:2]
+                        formatted = [f"{name} {'↑' if val > 0 else '↓'}" for val, name in top]
+                        top_factors.append(", ".join(formatted))
+                    else:
+                        top_factors.append("")
+                df["Potential Fraud Factors"] = top_factors
+
+                # Download as Excel
                 out = BytesIO()
                 df.to_excel(out, index=False)
                 st.download_button("Download Results (Excel)", out.getvalue(), file_name="results.xlsx")
@@ -156,8 +153,7 @@ with st.expander("Upload labeled training data"):
             st.error("Missing columns: " + ", ".join([k for k, v in mapping.items() if v is None and k != "Fraud Label"]))
         else:
             df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
-            X = df[REQUIRED_COLUMNS].copy()
-            X = X.fillna(0)
+            X = df[REQUIRED_COLUMNS]
             y = df["Fraud Label"]
 
             numeric = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
