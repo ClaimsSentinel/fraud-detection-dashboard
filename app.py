@@ -4,6 +4,7 @@ import numpy as np
 import joblib
 import shap
 import os
+import base64
 from io import BytesIO
 from difflib import get_close_matches
 from datetime import datetime
@@ -20,13 +21,17 @@ from PIL import Image
 
 st.set_page_config(page_title="ClaimsSentinel", layout="centered")
 
-# Display centered, high-resolution logo only
+# Encode logo as base64
 logo_path = "logo/claimsentinel_logo.png"
+def image_to_base64(img_path):
+    with open(img_path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
 if os.path.exists(logo_path):
-    image = Image.open(logo_path)
-    st.markdown("""
+    encoded_logo = image_to_base64(logo_path)
+    st.markdown(f"""
         <div style='display: flex; justify-content: center; margin-top: 1rem;'>
-            <img src='data:image/png;base64,""" + BytesIO(image.tobytes()).getvalue().hex() + """' style='width: 400px;'/>
+            <img src='data:image/png;base64,{encoded_logo}' style='width: 400px;'/>
         </div>
     """, unsafe_allow_html=True)
 
@@ -103,8 +108,31 @@ if file:
                         X_transformed = model.named_steps['preprocessor'].transform(X)
                     shap_values = explainer(X_transformed)
                     shap.initjs()
-                    st_shap = shap.plots.waterfall(shap_values[selected_row], show=False)
-                    st.pyplot(bbox_inches='tight')
+                    st.pyplot(shap.plots.waterfall(shap_values[selected_row]))
+
+                # SHAP explanations per-row in export
+                if explainer is None:
+                    explainer = shap.Explainer(model.named_steps['classifier'])
+                    X_transformed = model.named_steps['preprocessor'].transform(X)
+                shap_values = explainer(X_transformed)
+
+                def summarize_top_features(sv, feature_names, top_n=2):
+                    abs_vals = np.abs(sv.values)
+                    top_indices = np.argsort(abs_vals)[-top_n:][::-1]
+                    labels = []
+                    for i in top_indices:
+                        direction = "↑" if sv.values[i] > 0 else "↓"
+                        labels.append(f"{feature_names[i]} {direction}")
+                    return ", ".join(labels)
+
+                try:
+                    feature_names = shap_values.feature_names
+                    df["Potential Fraud Factors"] = [
+                        summarize_top_features(shap_values[i], feature_names) if p == 1 else ""
+                        for i, p in enumerate(preds)
+                    ]
+                except Exception as e:
+                    df["Potential Fraud Factors"] = ""
 
                 out = BytesIO()
                 df.to_excel(out, index=False)
