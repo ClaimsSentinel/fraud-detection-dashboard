@@ -1,5 +1,3 @@
-# ClaimsSentinel Final app.py with logo-only branding, full fuzzy mapping, Excel support, SHAP explanations, Misty Rose highlight
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -22,11 +20,13 @@ from PIL import Image
 
 st.set_page_config(page_title="ClaimsSentinel", layout="centered")
 
-# Display logo only
+# Display high-res centered logo
 logo_path = "logo/claimsentinel_logo.png"
 if os.path.exists(logo_path):
     image = Image.open(logo_path)
-    st.image(image, use_column_width=False, width=400)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.image(image, use_column_width=False, width=420)
 
 REQUIRED_COLUMNS = [
     "Claim Amount", "Previous Claims Count", "Claim Location",
@@ -34,7 +34,7 @@ REQUIRED_COLUMNS = [
     "Adjuster Notes", "Date of Claim", "Policyholder ID"
 ]
 
-# Fuzzy mapping function
+# Fuzzy column mapping
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.6):
     mapping = {}
     for req in required_cols:
@@ -48,7 +48,6 @@ def clean_dataframe(df):
         df[col] = df[col].str.replace(r'[$,]', '', regex=True)
     return df
 
-# Load model if available
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 explainer = None
@@ -77,7 +76,6 @@ if file:
 
                 st.dataframe(df.style.apply(highlight_fraud, axis=1), use_container_width=True)
 
-                # Row click-to-explain
                 selected_row = st.selectbox("Select a claim to explain:", df.index[df["Potential Fraud"] == 1].tolist())
                 if st.button("Explain why this is potential fraud"):
                     if explainer is None:
@@ -88,7 +86,6 @@ if file:
                     st_shap = shap.plots.waterfall(shap_values[selected_row], show=False)
                     st.pyplot(bbox_inches='tight')
 
-                # Download as Excel
                 out = BytesIO()
                 df.to_excel(out, index=False)
                 st.download_button("Download Results (Excel)", out.getvalue(), file_name="results.xlsx")
