@@ -64,6 +64,9 @@ if file:
         st.error("Missing columns: " + ", ".join([k for k, v in mapping.items() if v is None]))
     else:
         df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
+        X = X.copy()
+        for col in X.select_dtypes(include='object').columns:
+            X[col] = X[col].astype(str)
         X = df[REQUIRED_COLUMNS]
         if "Date of Claim" in X.columns:
             X["Date of Claim"] = X["Date of Claim"].astype(str)
