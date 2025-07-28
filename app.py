@@ -4,7 +4,6 @@ import numpy as np
 import joblib
 import shap
 import os
-import base64
 from io import BytesIO
 from difflib import get_close_matches
 from datetime import datetime
@@ -21,17 +20,18 @@ from PIL import Image
 
 st.set_page_config(page_title="ClaimsSentinel", layout="centered")
 
-# Encode logo as base64
+# Display high-def, centered logo
 logo_path = "logo/claimsentinel_logo.png"
-def image_to_base64(img_path):
-    with open(img_path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
-
 if os.path.exists(logo_path):
-    encoded_logo = image_to_base64(logo_path)
+    image = Image.open(logo_path)
+    from base64 import b64encode
+    import io
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    encoded = b64encode(buf.getvalue()).decode()
     st.markdown(f"""
         <div style='display: flex; justify-content: center; margin-top: 1rem;'>
-            <img src='data:image/png;base64,{encoded_logo}' style='width: 400px;'/>
+            <img src='data:image/png;base64,{encoded}' style='width: 400px;'/>
         </div>
     """, unsafe_allow_html=True)
 
@@ -41,36 +41,38 @@ REQUIRED_COLUMNS = [
     "Adjuster Notes", "Date of Claim", "Policyholder ID"
 ]
 
-FALLBACK_COLUMN_MAP = {
-    "Claim Amount": ["Total Claim Value"],
-    "Previous Claims Count": ["Num Prev Claims"],
-    "Claim Location": ["Incident Locale"],
-    "Vehicle Make/Model": ["Vehicle Brand/Model"],
-    "Claim Description": ["Incident Summary"],
-    "Claim ID": ["Ref ID"],
-    "Adjuster Notes": ["Adjuster Comments"],
-    "Date of Claim": ["Filing Date"],
-    "Policyholder ID": ["Insured Party ID"]
+# Fuzzy mapping
+fuzzy_synonyms = {
+    "Total Claim Value": "Claim Amount",
+    "Num Prev Claims": "Previous Claims Count",
+    "Incident Locale": "Claim Location",
+    "Vehicle Brand/Model": "Vehicle Make/Model",
+    "Incident Summary": "Claim Description",
+    "Ref ID": "Claim ID",
+    "Adjuster Comments": "Adjuster Notes",
+    "Filing Date": "Date of Claim",
+    "Insured Party ID": "Policyholder ID",
+    "Likely Fraud?": "Fraud Label"
 }
 
 def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.6):
     mapping = {}
     for req in required_cols:
-        match = get_close_matches(req, uploaded_cols, n=1, cutoff=cutoff)
-        if match:
-            mapping[req] = match[0]
+        if req in uploaded_cols:
+            mapping[req] = req
         else:
-            for fallback in FALLBACK_COLUMN_MAP.get(req, []):
-                if fallback in uploaded_cols:
-                    mapping[req] = fallback
-                    break
+            match = get_close_matches(req, uploaded_cols, n=1, cutoff=cutoff)
+            if match:
+                mapping[req] = match[0]
             else:
-                mapping[req] = None
+                fuzzy_match = [col for col in uploaded_cols if fuzzy_synonyms.get(col) == req]
+                mapping[req] = fuzzy_match[0] if fuzzy_match else None
     return mapping
 
 def clean_dataframe(df):
     for col in df.select_dtypes(include='object').columns:
         df[col] = df[col].str.replace(r'[$,]', '', regex=True)
+        df[col] = pd.to_numeric(df[col], errors='ignore')
     return df
 
 model_path = "model.pkl"
@@ -89,12 +91,28 @@ if file:
         st.error("Missing columns: " + ", ".join([k for k, v in mapping.items() if v is None]))
     else:
         df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
-        X = df[REQUIRED_COLUMNS]
+        X = df[REQUIRED_COLUMNS].copy()
+        X = X.fillna(0)
         if model:
             try:
                 preds = model.predict(X)
                 df["Potential Fraud"] = preds
-                st.success(f"{sum(preds)} claims flagged as potential fraud")
+
+                # SHAP explainer setup
+                X_transformed = model.named_steps['preprocessor'].transform(X)
+                explainer = shap.Explainer(model.named_steps['classifier'], X_transformed)
+                shap_values = explainer(X_transformed)
+
+                def top_fraud_factors(shap_vals, feature_names):
+                    result = []
+                    for i in range(len(shap_vals)):
+                        vals = shap_vals[i].values
+                        top_idxs = np.argsort(np.abs(vals))[-2:][::-1]
+                        signs = ["↑" if vals[j] > 0 else "↓" for j in top_idxs]
+                        result.append(", ".join([f"{feature_names[j]} {signs[k]}" for k, j in enumerate(top_idxs)]))
+                    return result
+
+                df["Potential Fraud Factors"] = top_fraud_factors(shap_values, explainer.feature_names)
 
                 def highlight_fraud(row):
                     return ['background-color: MistyRose' if row["Potential Fraud"] == 1 else '' for _ in row]
@@ -103,36 +121,8 @@ if file:
 
                 selected_row = st.selectbox("Select a claim to explain:", df.index[df["Potential Fraud"] == 1].tolist())
                 if st.button("Explain why this is potential fraud"):
-                    if explainer is None:
-                        explainer = shap.Explainer(model.named_steps['classifier'])
-                        X_transformed = model.named_steps['preprocessor'].transform(X)
-                    shap_values = explainer(X_transformed)
-                    shap.initjs()
-                    st.pyplot(shap.plots.waterfall(shap_values[selected_row]))
-
-                # SHAP explanations per-row in export
-                if explainer is None:
-                    explainer = shap.Explainer(model.named_steps['classifier'])
-                    X_transformed = model.named_steps['preprocessor'].transform(X)
-                shap_values = explainer(X_transformed)
-
-                def summarize_top_features(sv, feature_names, top_n=2):
-                    abs_vals = np.abs(sv.values)
-                    top_indices = np.argsort(abs_vals)[-top_n:][::-1]
-                    labels = []
-                    for i in top_indices:
-                        direction = "↑" if sv.values[i] > 0 else "↓"
-                        labels.append(f"{feature_names[i]} {direction}")
-                    return ", ".join(labels)
-
-                try:
-                    feature_names = shap_values.feature_names
-                    df["Potential Fraud Factors"] = [
-                        summarize_top_features(shap_values[i], feature_names) if p == 1 else ""
-                        for i, p in enumerate(preds)
-                    ]
-                except Exception as e:
-                    df["Potential Fraud Factors"] = ""
+                    shap.plots.waterfall(shap_values[selected_row], show=False)
+                    st.pyplot(bbox_inches='tight')
 
                 out = BytesIO()
                 df.to_excel(out, index=False)
@@ -160,7 +150,8 @@ with st.expander("Upload labeled training data"):
             st.error("Missing columns: " + ", ".join([k for k, v in mapping.items() if v is None and k != "Fraud Label"]))
         else:
             df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
-            X = df[REQUIRED_COLUMNS]
+            X = df[REQUIRED_COLUMNS].copy()
+            X = X.fillna(0)
             y = df["Fraud Label"]
 
             numeric = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
