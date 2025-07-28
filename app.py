@@ -4,7 +4,6 @@ import numpy as np
 import joblib
 import shap
 import os
-import base64
 from io import BytesIO
 from difflib import get_close_matches
 from datetime import datetime
@@ -18,19 +17,15 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
 import matplotlib.pyplot as plt
 from PIL import Image
+import base64
 
 st.set_page_config(page_title="ClaimsSentinel", layout="centered")
 
-# Display logo only, centered and high-def
+# Display logo only
 logo_path = "logo/claimsentinel_logo.png"
 if os.path.exists(logo_path):
     image = Image.open(logo_path)
-    encoded = base64.b64encode(open(logo_path, "rb").read()).decode()
-    st.markdown(f"""
-        <div style='display: flex; justify-content: center; margin: 20px 0;'>
-            <img src='data:image/png;base64,{encoded}' style='width: 400px;' />
-        </div>
-    """, unsafe_allow_html=True)
+    st.image(image, use_column_width=False, width=400)
 
 REQUIRED_COLUMNS = [
     "Claim Amount", "Previous Claims Count", "Claim Location",
@@ -46,18 +41,13 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.6):
         mapping[req] = match[0] if match else None
     return mapping
 
-# Clean and sanitize numeric and string data
+# Clean numbers
 def clean_dataframe(df):
-    for col in df.columns:
-        if df[col].dtype == object:
-            df[col] = df[col].astype(str).str.replace(r'[\$,]', '', regex=True)
-            try:
-                df[col] = pd.to_numeric(df[col], errors='ignore')
-            except:
-                pass
+    for col in df.select_dtypes(include='object').columns:
+        df[col] = df[col].str.replace(r'[$,]', '', regex=True)
     return df
 
-# Load model
+# Load model if available
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 explainer = None
@@ -75,12 +65,11 @@ if file:
     else:
         df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
         X = df[REQUIRED_COLUMNS]
+        if "Date of Claim" in X.columns:
+            X["Date of Claim"] = X["Date of Claim"].astype(str)
         if model:
             try:
-                X = X.replace([np.inf, -np.inf], np.nan)
-                X = X.dropna()
                 preds = model.predict(X)
-                df = df.loc[X.index]  # align with filtered X
                 df["Potential Fraud"] = preds
                 st.success(f"{sum(preds)} claims flagged as potential fraud")
 
@@ -89,32 +78,15 @@ if file:
 
                 st.dataframe(df.style.apply(highlight_fraud, axis=1), use_container_width=True)
 
-                # Row-by-row explanation
-                fraud_indexes = df.index[df["Potential Fraud"] == 1].tolist()
-                explain_row = st.selectbox("Select a claim to explain:", fraud_indexes)
+                selected_row = st.selectbox("Select a claim to explain:", df.index[df["Potential Fraud"] == 1].tolist())
                 if st.button("Explain why this is potential fraud"):
                     if explainer is None:
+                        explainer = shap.Explainer(model.named_steps['classifier'])
                         X_transformed = model.named_steps['preprocessor'].transform(X)
-                        explainer = shap.Explainer(model.named_steps['classifier'], X_transformed)
                     shap_values = explainer(X_transformed)
                     shap.initjs()
-                    st.pyplot(shap.plots.waterfall(shap_values[fraud_indexes.index(explain_row)], show=False))
+                    st.pyplot(shap.plots.waterfall(shap_values[selected_row], show=False))
 
-                # Add top 2 fraud reason columns
-                if explainer and 'shap_values' in locals():
-                    top_features = []
-                    for i in range(len(df)):
-                        if i in fraud_indexes:
-                            row_vals = shap_values[fraud_indexes.index(i)].values
-                            row_names = shap_values.feature_names
-                            sorted_idx = np.argsort(np.abs(row_vals))[::-1]
-                            reasons = [row_names[j] for j in sorted_idx[:2]]
-                            top_features.append(", ".join(reasons))
-                        else:
-                            top_features.append("")
-                    df["Potential Fraud Factors"] = top_features
-
-                # Export Excel
                 out = BytesIO()
                 df.to_excel(out, index=False)
                 st.download_button("Download Results (Excel)", out.getvalue(), file_name="results.xlsx")
