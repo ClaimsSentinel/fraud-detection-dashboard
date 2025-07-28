@@ -62,7 +62,7 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.7):
 
 def clean_dataframe(df):
     for col in df.select_dtypes(include="object").columns:
-        df[col] = df[col].astype(str).str.replace(r"[\$,]", "", regex=True)
+        df[col] = df[col].astype(str).str.replace(r"[\\$,]", "", regex=True)
     return df
 
 def get_preprocessor(X):
@@ -85,6 +85,10 @@ if uploaded_file:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
         df = clean_dataframe(df)
         st.success("✅ File uploaded.")
+
+        # Prevent prediction from accidentally using label columns
+        if "Fraud Label" in df.columns:
+            df = df.drop(columns=["Fraud Label"])
 
         mapping = fuzzy_column_map(df.columns.tolist(), required_columns)
         df = df.rename(columns={v: k for k, v in mapping.items() if v})
@@ -179,4 +183,3 @@ with st.expander("📚 Upload labeled data to retrain the model"):
                 """, unsafe_allow_html=True)
         except Exception as e:
             st.error(f"Training failed: {e}")
-
