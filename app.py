@@ -92,14 +92,20 @@ if file:
     else:
         df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
         X = df[REQUIRED_COLUMNS].copy()
-        X = X.fillna(0)
+
+        # Fix: prepare all fields properly
+        X = X.fillna("")
+        for col in X.select_dtypes(include=['object', 'category']).columns:
+            X[col] = X[col].astype(str)
+
         if model:
             try:
-                preds = model.predict(X)
+                # Transform and predict
+                X_transformed = model.named_steps['preprocessor'].transform(X)
+                preds = model.named_steps['classifier'].predict(X_transformed)
                 df["Potential Fraud"] = preds
 
-                # SHAP explainer setup
-                X_transformed = model.named_steps['preprocessor'].transform(X)
+                # SHAP setup
                 explainer = shap.Explainer(model.named_steps['classifier'], X_transformed)
                 shap_values = explainer(X_transformed)
 
