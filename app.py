@@ -1,12 +1,10 @@
-# ClaimsSentinel Final app.py with logo-only branding, full fuzzy mapping, Excel support, SHAP explanations, Misty Rose highlight
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
 import shap
-import os
 import base64
+import os
 from io import BytesIO
 from difflib import get_close_matches
 from datetime import datetime
@@ -23,14 +21,14 @@ from PIL import Image
 
 st.set_page_config(page_title="ClaimsSentinel", layout="centered")
 
-# Display logo only
+# Show centered high-res logo
 logo_path = "logo/claimsentinel_logo.png"
 if os.path.exists(logo_path):
     image = Image.open(logo_path)
-    st.markdown("""
-        <div style='display: flex; justify-content: center; margin-top: 1rem;'>
-            <img src='data:image/png;base64,""" + \
-        base64.b64encode(open(logo_path, "rb").read()).decode() + """' style='width: 400px;'/>
+    image_base64 = base64.b64encode(open(logo_path, "rb").read()).decode()
+    st.markdown(f"""
+        <div style='display: flex; justify-content: center; margin-bottom: 1rem;'>
+            <img src='data:image/png;base64,{image_base64}' style='width: 400px;'/>
         </div>
     """, unsafe_allow_html=True)
 
@@ -48,28 +46,20 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.6):
         mapping[req] = match[0] if match else None
     return mapping
 
-# Clean numbers
+# Clean numbers & dates
 def clean_dataframe(df):
     for col in df.select_dtypes(include='object').columns:
         df[col] = df[col].str.replace(r'[$,]', '', regex=True)
+    if 'Date of Claim' in df.columns:
+        df['Date of Claim'] = pd.to_datetime(df['Date of Claim'], errors='coerce')
+        df['Date of Claim'] = df['Date of Claim'].dt.strftime('%Y-%m-%d')
     return df
 
-# Coerce and fix unexpected datatypes
-def sanitize_prediction_data(df):
-    for col in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
-            df[col] = df[col].astype(str)
-        elif pd.api.types.is_object_dtype(df[col]):
-            try:
-                df[col] = pd.to_numeric(df[col], errors='ignore')
-            except:
-                pass
-    return df
-
-# Load model if available
 model_path = "model.pkl"
 model = joblib.load(model_path) if os.path.exists(model_path) else None
 explainer = None
+shap_values = None
+X_transformed = None
 
 st.markdown("<div style='width:600px;'>", unsafe_allow_html=True)
 st.subheader("📂 Upload Claims File")
@@ -78,59 +68,52 @@ file = st.file_uploader("", type=["csv", "xlsx"], key="predict")
 if file:
     df = pd.read_csv(file) if file.name.endswith(".csv") else pd.read_excel(file)
     df = clean_dataframe(df)
-    df = sanitize_prediction_data(df)
     mapping = fuzzy_column_map(df.columns.tolist(), REQUIRED_COLUMNS)
     if any(v is None for v in mapping.values()):
         st.error("Missing columns: " + ", ".join([k for k, v in mapping.items() if v is None]))
     else:
         df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
-        X = df[REQUIRED_COLUMNS].copy()
-        X = X.fillna("")
-        for col in X.select_dtypes(include=['object', 'category']).columns:
-            X[col] = X[col].astype(str)
-
+        X = df[REQUIRED_COLUMNS]
         if model:
             try:
-                X_transformed = model.named_steps['preprocessor'].transform(X)
-                preds = model.named_steps['classifier'].predict(X_transformed)
+                preds = model.predict(X)
                 df["Potential Fraud"] = preds
-                st.success(f"{sum(preds)} claims flagged as potential fraud")
 
-                def highlight_fraud(row):
+                def highlight(row):
                     return ['background-color: MistyRose' if row["Potential Fraud"] == 1 else '' for _ in row]
 
-                st.dataframe(df.style.apply(highlight_fraud, axis=1), use_container_width=True)
+                st.dataframe(df.style.apply(highlight, axis=1), use_container_width=True)
 
-                selected_row = st.selectbox("Select a claim to explain:", df.index[df["Potential Fraud"] == 1].tolist())
-                if st.button("Explain why this is potential fraud"):
-                    if explainer is None:
-                        explainer = shap.Explainer(model.named_steps['classifier'])
-                        X_transformed = model.named_steps['preprocessor'].transform(X)
-                    shap_values = explainer(X_transformed)
-                    shap.initjs()
-                    st_shap = shap.plots.waterfall(shap_values[selected_row], show=False)
-                    st.pyplot(bbox_inches='tight')
-
-                # SHAP Export Column
+                # SHAP setup
                 if explainer is None:
-                    explainer = shap.Explainer(model.named_steps['classifier'])
-                    X_transformed = model.named_steps['preprocessor'].transform(X)
-                shap_values = explainer(X_transformed)
-                top_factors = []
-                for i in range(len(df)):
-                    if df.loc[i, "Potential Fraud"] == 1:
-                        sv = shap_values[i]
-                        top = sorted(zip(sv.values, sv.feature_names), key=lambda x: abs(x[0]), reverse=True)[:2]
-                        formatted = [f"{name} {'↑' if val > 0 else '↓'}" for val, name in top]
-                        top_factors.append(", ".join(formatted))
-                    else:
-                        top_factors.append("")
-                df["Potential Fraud Factors"] = top_factors
+                    try:
+                        X_transformed = model.named_steps['preprocessor'].transform(X)
+                        explainer = shap.Explainer(model.named_steps['classifier'])
+                        shap_values = explainer(X_transformed)
+                    except Exception as e:
+                        st.warning(f"SHAP setup failed: {e}")
 
-                # Download as Excel
+                fraud_indices = df.index[df["Potential Fraud"] == 1].tolist()
+                if fraud_indices:
+                    selected = st.selectbox("Select a claim to explain:", fraud_indices)
+                    if st.button("Explain why this is potential fraud") and shap_values is not None:
+                        shap.initjs()
+                        st.pyplot(shap.plots.waterfall(shap_values[selected], show=False))
+
+                # Export w/ fraud factors (top 2 shap features)
+                export_df = df.copy()
+                if shap_values is not None:
+                    top_factors = []
+                    feature_names = model.named_steps['preprocessor'].get_feature_names_out()
+                    for i in range(len(shap_values)):
+                        impact = sorted(zip(feature_names, shap_values[i].values), key=lambda x: abs(x[1]), reverse=True)
+                        summary = ", ".join([f"{k} ({round(v,2)})" for k,v in impact[:2]])
+                        top_factors.append(summary)
+                    export_df["Potential Fraud Factors"] = top_factors
+
                 out = BytesIO()
-                df.to_excel(out, index=False)
-                st.download_button("Download Results (Excel)", out.getvalue(), file_name="results.xlsx")
+                export_df.to_excel(out, index=False)
+                st.download_button("📥 Download Results (Excel)", out.getvalue(), file_name="results.xlsx")
 
             except Exception as e:
                 st.error(f"Prediction error: {e}")
@@ -138,11 +121,11 @@ if file:
             st.warning("No trained model found. Retrain below.")
 
 st.markdown("</div>", unsafe_allow_html=True)
-
 st.markdown("---")
 st.markdown("<div style='width:600px;'>", unsafe_allow_html=True)
 st.subheader("🧠 Retrain Model")
-with st.expander("Upload labeled training data"):
+
+with st.expander("📚 Upload labeled training data"):
     train_file = st.file_uploader("Upload training file with 'Fraud Label' column", type=["csv", "xlsx"], key="train")
     model_choice = st.radio("Choose model", ["Logistic Regression", "Random Forest"])
 
