@@ -1,9 +1,12 @@
+# ClaimsSentinel Final app.py with logo-only branding, full fuzzy mapping, Excel support, SHAP explanations, Misty Rose highlight
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
 import shap
 import os
+import base64
 from io import BytesIO
 from difflib import get_close_matches
 from datetime import datetime
@@ -17,7 +20,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
 import matplotlib.pyplot as plt
 from PIL import Image
-import base64
 
 st.set_page_config(page_title="ClaimsSentinel", layout="centered")
 
@@ -43,8 +45,10 @@ def fuzzy_column_map(uploaded_cols, required_cols, cutoff=0.6):
 
 # Clean numbers
 def clean_dataframe(df):
-    for col in df.select_dtypes(include='object').columns:
-        df[col] = df[col].str.replace(r'[$,]', '', regex=True)
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].astype(str).str.replace(r'[$,]', '', regex=True)
+            df[col] = pd.to_numeric(df[col], errors='ignore')
     return df
 
 # Load model if available
@@ -53,7 +57,7 @@ model = joblib.load(model_path) if os.path.exists(model_path) else None
 explainer = None
 
 st.markdown("<div style='width:600px;'>", unsafe_allow_html=True)
-st.subheader("📂 Upload Claims File")
+st.subheader("Upload Claims File")
 file = st.file_uploader("", type=["csv", "xlsx"], key="predict")
 
 if file:
@@ -64,12 +68,13 @@ if file:
         st.error("Missing columns: " + ", ".join([k for k, v in mapping.items() if v is None]))
     else:
         df.rename(columns={v: k for k, v in mapping.items()}, inplace=True)
+        X = df[REQUIRED_COLUMNS]
         X = X.copy()
         for col in X.select_dtypes(include='object').columns:
             X[col] = X[col].astype(str)
-        X = df[REQUIRED_COLUMNS]
         if "Date of Claim" in X.columns:
             X["Date of Claim"] = X["Date of Claim"].astype(str)
+
         if model:
             try:
                 preds = model.predict(X)
@@ -81,6 +86,7 @@ if file:
 
                 st.dataframe(df.style.apply(highlight_fraud, axis=1), use_container_width=True)
 
+                # Row click-to-explain
                 selected_row = st.selectbox("Select a claim to explain:", df.index[df["Potential Fraud"] == 1].tolist())
                 if st.button("Explain why this is potential fraud"):
                     if explainer is None:
@@ -88,8 +94,10 @@ if file:
                         X_transformed = model.named_steps['preprocessor'].transform(X)
                     shap_values = explainer(X_transformed)
                     shap.initjs()
-                    st.pyplot(shap.plots.waterfall(shap_values[selected_row], show=False))
+                    st_shap = shap.plots.waterfall(shap_values[selected_row], show=False)
+                    st.pyplot(bbox_inches='tight')
 
+                # Download as Excel
                 out = BytesIO()
                 df.to_excel(out, index=False)
                 st.download_button("Download Results (Excel)", out.getvalue(), file_name="results.xlsx")
@@ -103,8 +111,8 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("---")
 st.markdown("<div style='width:600px;'>", unsafe_allow_html=True)
-st.subheader("🧠 Retrain Model")
-with st.expander("📚 Upload labeled training data"):
+st.subheader("Retrain Model")
+with st.expander("Upload labeled training data"):
     train_file = st.file_uploader("Upload training file with 'Fraud Label' column", type=["csv", "xlsx"], key="train")
     model_choice = st.radio("Choose model", ["Logistic Regression", "Random Forest"])
 
