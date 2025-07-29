@@ -106,7 +106,7 @@ if file:
                         explainer = shap.Explainer(model.named_steps['classifier'])
                         X_transformed = model.named_steps['preprocessor'].transform(X)
                     shap_values = explainer(X_transformed)
-                    st.pyplot(shap.plots.waterfall(shap_values[explain_row], show=False))
+                    st.pyplot(shap.plots.waterfall(shap_values[explain_row][0], show=False))
 
                     # Export reasoning
                     top_features = sorted(zip(model.named_steps['preprocessor'].get_feature_names_out(), shap_values[explain_row].values), key=lambda x: abs(x[1]), reverse=True)[:3]
